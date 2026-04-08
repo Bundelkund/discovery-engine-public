@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.config import load_scoring_config
 from app.dependencies import get_supabase, require_api_key
+from app.utils.profile_mapper import map_profile_data
 from app.models.job import NormalizedJob
 from app.models.profile import UserProfile
 from app.models.responses import ScoreResponse
@@ -34,11 +35,7 @@ async def score_batch(
     if not profile_data:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    # Map DB column names to model fields
-    profile_data["keywords_positive"] = (
-        (profile_data.get("keywords_positive_tech") or [])
-        + (profile_data.get("keywords_positive_soft") or [])
-    )
+    map_profile_data(profile_data)
     profile = UserProfile(
         **{k: v for k, v in profile_data.items() if k in UserProfile.model_fields}
     )

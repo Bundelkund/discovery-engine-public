@@ -1,37 +1,242 @@
+# Archetype Catalog for Job Scoring
+#
+# Each archetype defines keywords (DE + EN) that are matched against
+# job title + description. Users select archetype weights in their profile
+# (e.g. bridge-builder: 0.9, coach: 0.7).
+#
+# Scoring formula: best_match = max(matches × 40, 100) × user_weight
+# More keywords = more matches = higher scores for relevant jobs.
+#
+# To calibrate: add keywords from actual job titles that should match.
+# Use /score/batch to re-score after changes. See docs/SCORING.md.
+
 archetypes:
-  change-agent:
-    label: "Change Agent"
-    keywords_de: ["Transformation Manager", "Change Lead", "Change Manager", "Veränderungsmanager"]
-    keywords_en: ["Transformation Lead", "Change Manager", "Organizational Change"]
-  enabler:
-    label: "Enabler"
-    keywords_de: ["L&D Manager", "Personalentwickler", "Weiterbildungsmanager"]
-    keywords_en: ["Learning & Development Manager", "Training Manager", "Enablement Lead"]
-  coach:
-    label: "Coach"
-    keywords_de: ["Agile Coach", "Scrum Master", "Team Coach", "Systemischer Coach"]
-    keywords_en: ["Agile Coach", "Enterprise Coach", "Team Coach", "Scrum Master"]
+
   bridge-builder:
     label: "Bridge Builder"
-    keywords_de: ["AI Adoption Lead", "Digitalisierungsmanager", "KI-Implementierung"]
-    keywords_en: ["AI Implementation Lead", "Digital Transformation Manager", "AI Adoption"]
-  strategist:
-    label: "Strategist"
-    keywords_de: ["Innovationsmanager", "Strategieberater", "Head of Innovation"]
-    keywords_en: ["Innovation Manager", "Strategy Consultant", "Head of Innovation"]
+    description: "Verbindet Technologie mit Business. Uebersetzt zwischen Teams."
+    keywords_de:
+      - "AI Adoption Lead"
+      - "Digitalisierungsmanager"
+      - "KI-Implementierung"
+      - "Digitale Transformation"
+      - "AI Berater"
+      - "KI Berater"
+      - "Solutions Architect"
+      - "Implementierungsberater"
+      - "Technical Account Manager"
+      - "Technologieberater"
+    keywords_en:
+      - "AI Implementation Lead"
+      - "Digital Transformation Manager"
+      - "AI Adoption"
+      - "Forward Deployed Engineer"
+      - "Solutions Engineer"
+      - "Solutions Architect"
+      - "Solutions Consultant"
+      - "Technical Consultant"
+      - "Implementation Consultant"
+      - "Applied AI Engineer"
+      - "Customer Engineer"
+      - "Technical Account Manager"
+      - "Enterprise Engagement Manager"
+      - "Partner Solutions Engineer"
+      - "Field Engineer"
+      - "AI Solutions"
+
+  enabler:
+    label: "Enabler"
+    description: "Befaehigt Menschen und Teams. L&D, Training, Onboarding."
+    keywords_de:
+      - "L&D Manager"
+      - "Personalentwickler"
+      - "Weiterbildungsmanager"
+      - "Schulungsleiter"
+      - "Lernbegleiter"
+      - "Enablement Manager"
+      - "Personalentwicklung"
+      - "Weiterbildung"
+      - "Onboarding Manager"
+      - "Wissensmanager"
+    keywords_en:
+      - "Learning & Development Manager"
+      - "Training Manager"
+      - "Enablement Lead"
+      - "Enablement Manager"
+      - "Product Enablement"
+      - "GTM Enablement"
+      - "Customer Education"
+      - "Onboarding Manager"
+      - "Knowledge Manager"
+      - "L&D"
+      - "Leadership Development"
+      - "People Development"
+      - "Learning Experience"
+      - "Curriculum Designer"
+
+  coach:
+    label: "Coach"
+    description: "Begleitet Teams und Individuen. Agile, Systemic, Team Coaching."
+    keywords_de:
+      - "Agile Coach"
+      - "Scrum Master"
+      - "Team Coach"
+      - "Systemischer Coach"
+      - "Organisationsberater"
+      - "Prozessbegleiter"
+      - "Agile Master"
+      - "Kanban Coach"
+      - "OKR Coach"
+      - "Lean Coach"
+    keywords_en:
+      - "Agile Coach"
+      - "Enterprise Coach"
+      - "Team Coach"
+      - "Scrum Master"
+      - "Delivery Lead"
+      - "Agile Lead"
+      - "Agile Transformation"
+      - "Ways of Working"
+      - "Engineering Manager"
+      - "Technical Program Manager"
+      - "Program Manager"
+
+  change-agent:
+    label: "Change Agent"
+    description: "Treibt Veraenderung in Organisationen. Transformation, Change Management."
+    keywords_de:
+      - "Transformation Manager"
+      - "Change Lead"
+      - "Change Manager"
+      - "Veraenderungsmanager"
+      - "Organisationsentwickler"
+      - "Transformationsberater"
+      - "Change Consultant"
+      - "Kulturwandel"
+      - "New Work"
+      - "Organisationsentwicklung"
+    keywords_en:
+      - "Transformation Lead"
+      - "Change Manager"
+      - "Organizational Change"
+      - "Organizational Development"
+      - "Change Consultant"
+      - "Transformation Consultant"
+      - "Business Transformation"
+      - "Culture & Change"
+      - "People & Culture"
+      - "Organizational Design"
+
   consultant:
     label: "Consultant"
-    keywords_de: ["Managementberater", "Unternehmensberater", "Senior Consultant"]
-    keywords_en: ["Management Consultant", "Senior Consultant", "Principal Consultant"]
+    description: "Berater mit Fachexpertise. Strategy, Management, AI Consulting."
+    keywords_de:
+      - "Managementberater"
+      - "Unternehmensberater"
+      - "Senior Consultant"
+      - "Strategieberater"
+      - "Principal Consultant"
+      - "Lead Consultant"
+      - "Fachberater"
+      - "AI Consultant"
+      - "KI Consultant"
+    keywords_en:
+      - "Management Consultant"
+      - "Senior Consultant"
+      - "Principal Consultant"
+      - "Lead Consultant"
+      - "Strategy Consultant"
+      - "AI Consultant"
+      - "AI Governance"
+      - "Value Realisation"
+      - "Transformation Consultant"
+      - "Advisory"
+      - "Consulting"
+
   trainer:
     label: "KI-Trainer"
-    keywords_de: ["KI-Trainer", "AI Trainer", "KI-Dozent", "Schulungsleiter KI"]
-    keywords_en: ["AI Trainer", "GenAI Trainer", "AI Workshop Facilitator"]
+    description: "Vermittelt KI-Wissen. Workshops, Schulungen, Enablement."
+    keywords_de:
+      - "KI-Trainer"
+      - "AI Trainer"
+      - "KI-Dozent"
+      - "Schulungsleiter KI"
+      - "Workshop-Leiter KI"
+      - "KI Schulung"
+      - "AI Enablement"
+      - "GenAI Trainer"
+      - "Prompt Engineering Trainer"
+      - "AI Literacy"
+    keywords_en:
+      - "AI Trainer"
+      - "GenAI Trainer"
+      - "AI Workshop Facilitator"
+      - "AI Enablement"
+      - "AI Education"
+      - "AI Literacy"
+      - "Technical Trainer"
+      - "Customer Training"
+      - "AI Evangelist"
+      - "Developer Advocate"
+      - "Developer Relations"
+
+  strategist:
+    label: "Strategist"
+    description: "Denkt in Systemen. Innovation, Strategie, Vision."
+    keywords_de:
+      - "Innovationsmanager"
+      - "Strategieberater"
+      - "Head of Innovation"
+      - "Head of Strategy"
+      - "Chief of Staff"
+      - "Business Development"
+      - "Strategische Planung"
+      - "Innovation Lead"
+    keywords_en:
+      - "Innovation Manager"
+      - "Strategy Consultant"
+      - "Head of Innovation"
+      - "Head of Strategy"
+      - "Chief of Staff"
+      - "Business Development"
+      - "Strategic Partnerships"
+      - "Head of Partnerships"
+      - "Partner Manager"
+      - "VP Strategy"
+
   product-lead:
     label: "Product Lead"
-    keywords_de: ["Product Owner AI", "AI Product Manager", "Produktmanager KI"]
-    keywords_en: ["AI Product Manager", "ML Product Manager", "AI Product Owner"]
+    description: "Produktverantwortung mit AI/Tech-Fokus."
+    keywords_de:
+      - "Product Owner AI"
+      - "AI Product Manager"
+      - "Produktmanager KI"
+      - "Technical Product Manager"
+      - "Product Lead"
+    keywords_en:
+      - "AI Product Manager"
+      - "ML Product Manager"
+      - "AI Product Owner"
+      - "Product Manager AI"
+      - "Technical Product Manager"
+      - "Product Lead"
+      - "Product Design Lead"
+      - "Group Product Manager"
+
   facilitator:
     label: "Facilitator"
-    keywords_de: ["Moderator", "Workshop-Leiter", "Facilitator"]
-    keywords_en: ["Facilitator", "Workshop Lead", "Design Thinking Facilitator"]
+    description: "Moderiert Prozesse und Workshops. Design Thinking, Retrospektiven."
+    keywords_de:
+      - "Moderator"
+      - "Workshop-Leiter"
+      - "Facilitator"
+      - "Design Thinking Coach"
+      - "Retrospektiven-Leiter"
+      - "Prozessmoderator"
+    keywords_en:
+      - "Facilitator"
+      - "Workshop Lead"
+      - "Design Thinking Facilitator"
+      - "Meeting Facilitator"
+      - "Collaboration Lead"
+      - "Design Sprint Lead"

@@ -9,6 +9,7 @@ from app.config import (
     load_scoring_config,
     load_sources_config,
 )
+from app.utils.profile_mapper import map_profile_data
 from app.deduplication.dedup import DeduplicationService
 from app.enrichment.pipeline import EnrichmentPipeline
 from app.models.company import CompanyProfile, EnrichmentContext
@@ -51,11 +52,7 @@ class ScrapeOrchestrator:
                     status_code=404,
                     detail=f"Profile {profile_id} not found",
                 )
-            # Map DB column names to model fields
-            profile_data["keywords_positive"] = (
-                (profile_data.get("keywords_positive_tech") or [])
-                + (profile_data.get("keywords_positive_soft") or [])
-            )
+            map_profile_data(profile_data)
             profile = UserProfile(
                 **{
                     k: v
