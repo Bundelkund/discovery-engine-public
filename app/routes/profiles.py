@@ -10,6 +10,7 @@ profiles_router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 
 class CreateProfileRequest(BaseModel):
+    user_id: str
     name: str
     archetypes: dict[str, float] = {}
     keywords_positive: list[str] = []

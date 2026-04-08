@@ -18,6 +18,10 @@ class ProfileRepository(BaseRepository):
         return result.data[0] if result.data else None
 
     async def create(self, data: dict) -> dict:
+        # Map model field to DB columns
+        if "keywords_positive" in data:
+            data["keywords_positive_tech"] = data.pop("keywords_positive")
+        data.pop("keywords_negative", None) if not data.get("keywords_negative") else None
         result = self.client.table(self.TABLE).insert(data).execute()
         return result.data[0] if result.data else {}
 

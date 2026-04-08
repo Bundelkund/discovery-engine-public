@@ -14,7 +14,10 @@ class Settings(BaseSettings):
     hunter_api_key: str = ""
     openai_api_key: str = ""
 
-    model_config = {"env_file": ".env"}
+    model_config = {
+        "env_file": Path(__file__).parent.parent / ".env",
+        "extra": "ignore",
+    }
 
 
 @lru_cache

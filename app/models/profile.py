@@ -8,7 +8,7 @@ class UserProfile(BaseModel):
 
     id: str
     name: str = ""
-    cv_text: str = ""
+    cv_text: Optional[str] = ""
     archetypes: dict[str, float] = Field(default_factory=dict)
     keywords_positive: list[str] = Field(default_factory=list)
     keywords_negative: list[str] = Field(default_factory=list)
