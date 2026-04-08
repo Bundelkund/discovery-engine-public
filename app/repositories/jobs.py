@@ -35,7 +35,7 @@ class JobRepository(BaseRepository):
         try:
             result = (
                 self.client.table(self.TABLE)
-                .upsert(rows, on_conflict="url")
+                .insert(rows)
                 .execute()
             )
             return len(result.data) if result.data else 0
