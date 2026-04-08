@@ -34,6 +34,11 @@ async def score_batch(
     if not profile_data:
         raise HTTPException(status_code=404, detail="Profile not found")
 
+    # Map DB column names to model fields
+    profile_data["keywords_positive"] = (
+        (profile_data.get("keywords_positive_tech") or [])
+        + (profile_data.get("keywords_positive_soft") or [])
+    )
     profile = UserProfile(
         **{k: v for k, v in profile_data.items() if k in UserProfile.model_fields}
     )

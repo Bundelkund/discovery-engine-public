@@ -7,3 +7,8 @@ dist/
 build/
 .pytest_cache/
 .ruff_cache/
+.claude/
+.specs/
+.refs/
+.deepeval/
+excalidraw.log

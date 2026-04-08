@@ -21,7 +21,6 @@ class JobRepository(BaseRepository):
                     "company": job.company,
                     "location": job.location,
                     "description": job.description,
-                    "salary": job.salary,
                     "source": job.source,
                     "external_id": job.external_id,
                     "content_hash": job.content_hash,
@@ -30,6 +29,7 @@ class JobRepository(BaseRepository):
                     "archetype": job.archetype,
                     "company_domain": job.company_domain,
                     "profile_id": profile_id,
+                    "scraped_at": job.posted_at.isoformat() if job.posted_at else None,
                 }
             )
         try:

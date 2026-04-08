@@ -51,6 +51,11 @@ class ScrapeOrchestrator:
                     status_code=404,
                     detail=f"Profile {profile_id} not found",
                 )
+            # Map DB column names to model fields
+            profile_data["keywords_positive"] = (
+                (profile_data.get("keywords_positive_tech") or [])
+                + (profile_data.get("keywords_positive_soft") or [])
+            )
             profile = UserProfile(
                 **{
                     k: v

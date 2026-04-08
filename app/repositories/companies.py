@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.models.company import CompanyProfile
 from app.repositories.base import BaseRepository
@@ -48,4 +48,9 @@ class CompanyRepository(BaseRepository):
         enriched_at = existing.get("enriched_at")
         if not enriched_at:
             return True
-        return True  # Simplified: always re-enrich for now
+        enriched_dt = datetime.fromisoformat(
+            enriched_at.replace("Z", "+00:00")
+        )
+        return datetime.now(timezone.utc) - enriched_dt > timedelta(
+            days=max_age_days
+        )

@@ -1,4 +1,4 @@
-from fastapi import Depends, Header, HTTPException
+from fastapi import Header, HTTPException
 from supabase import create_client, Client
 
 from app.config import get_settings
@@ -14,14 +14,3 @@ async def require_api_key(x_api_key: str = Header(...)):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-async def load_profile(
-    profile_id: str, supabase: Client = Depends(get_supabase)
-):
-    result = (
-        supabase.table("profiles").select("*").eq("id", profile_id).execute()
-    )
-    if not result.data:
-        raise HTTPException(
-            status_code=404, detail=f"Profile {profile_id} not found"
-        )
-    return result.data[0]
