@@ -32,16 +32,17 @@ class JobRepository(BaseRepository):
                     "scraped_at": job.posted_at.isoformat() if job.posted_at else None,
                 }
             )
-        try:
-            result = (
-                self.client.table(self.TABLE)
-                .insert(rows)
-                .execute()
-            )
-            return len(result.data) if result.data else 0
-        except Exception as e:
-            logger.error(f"Failed to insert batch: {e}")
-            return 0
+        inserted = 0
+        for row in rows:
+            try:
+                self.client.table(self.TABLE).insert(row).execute()
+                inserted += 1
+            except Exception as e:
+                if "23505" in str(e):
+                    logger.debug(f"Duplicate skipped: {row['url'][:60]}")
+                else:
+                    logger.error(f"Failed to insert job: {e}")
+        return inserted
 
     async def update_scores(
         self, job_url: str, score_stage_2: float
