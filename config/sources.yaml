@@ -1,0 +1,21 @@
+sources:
+  indeed:
+    enabled: true
+    search_terms: ["AI Consultant", "KI Berater", "Agile Coach", "Transformation Manager"]
+    country: "germany"
+    limit: 50
+    proxy: null
+  greenhouse:
+    enabled: true
+    portals_file: "config/portals.yaml"
+  adzuna:
+    enabled: false
+    app_id: null
+    app_key: null
+    country: "de"
+    limit: 50
+  rss:
+    enabled: true
+    feeds:
+      - name: "Arbeit.swiss AI"
+        url: "https://www.arbeit.swiss/secoalv/l10n/api/public/v1/jobPostings.atom"

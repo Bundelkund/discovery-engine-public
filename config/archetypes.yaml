@@ -1,0 +1,37 @@
+archetypes:
+  change-agent:
+    label: "Change Agent"
+    keywords_de: ["Transformation Manager", "Change Lead", "Change Manager", "Veränderungsmanager"]
+    keywords_en: ["Transformation Lead", "Change Manager", "Organizational Change"]
+  enabler:
+    label: "Enabler"
+    keywords_de: ["L&D Manager", "Personalentwickler", "Weiterbildungsmanager"]
+    keywords_en: ["Learning & Development Manager", "Training Manager", "Enablement Lead"]
+  coach:
+    label: "Coach"
+    keywords_de: ["Agile Coach", "Scrum Master", "Team Coach", "Systemischer Coach"]
+    keywords_en: ["Agile Coach", "Enterprise Coach", "Team Coach", "Scrum Master"]
+  bridge-builder:
+    label: "Bridge Builder"
+    keywords_de: ["AI Adoption Lead", "Digitalisierungsmanager", "KI-Implementierung"]
+    keywords_en: ["AI Implementation Lead", "Digital Transformation Manager", "AI Adoption"]
+  strategist:
+    label: "Strategist"
+    keywords_de: ["Innovationsmanager", "Strategieberater", "Head of Innovation"]
+    keywords_en: ["Innovation Manager", "Strategy Consultant", "Head of Innovation"]
+  consultant:
+    label: "Consultant"
+    keywords_de: ["Managementberater", "Unternehmensberater", "Senior Consultant"]
+    keywords_en: ["Management Consultant", "Senior Consultant", "Principal Consultant"]
+  trainer:
+    label: "KI-Trainer"
+    keywords_de: ["KI-Trainer", "AI Trainer", "KI-Dozent", "Schulungsleiter KI"]
+    keywords_en: ["AI Trainer", "GenAI Trainer", "AI Workshop Facilitator"]
+  product-lead:
+    label: "Product Lead"
+    keywords_de: ["Product Owner AI", "AI Product Manager", "Produktmanager KI"]
+    keywords_en: ["AI Product Manager", "ML Product Manager", "AI Product Owner"]
+  facilitator:
+    label: "Facilitator"
+    keywords_de: ["Moderator", "Workshop-Leiter", "Facilitator"]
+    keywords_en: ["Facilitator", "Workshop Lead", "Design Thinking Facilitator"]

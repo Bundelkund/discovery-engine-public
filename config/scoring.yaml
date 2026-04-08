@@ -1,0 +1,17 @@
+scoring:
+  store_threshold: 30
+  stages:
+    - scorer_id: "keyword"
+      stage: 1
+      enabled: true
+      weights:
+        archetype_match: 30
+        keyword_positive: 25
+        seniority: 15
+        remote_bonus: 10
+        noise_penalty: -20
+    - scorer_id: "embedding"
+      stage: 2
+      enabled: true
+      gate_threshold: 50
+      model: "text-embedding-3-small"
