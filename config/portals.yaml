@@ -136,21 +136,21 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/elevenlabs'
     notes: "Voice AI TTS leader."
-    enabled: false
+    enabled: true
 
   - name: Deepgram
     careers_url: https://jobs.ashbyhq.com/deepgram
     scan_method: websearch
     scan_query: 'site:deepgram.com/careers OR "deepgram" "Solutions" OR "AI Engineer" site:jobs.ashbyhq.com'
     notes: "STT/TTS APIs."
-    enabled: false
+    enabled: true
 
   - name: Vapi
     careers_url: https://jobs.ashbyhq.com/vapi
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/vapi'
     notes: "Voice AI infrastructure."
-    enabled: false
+    enabled: true
 
   - name: Bland AI
     careers_url: https://jobs.ashbyhq.com/bland
@@ -225,14 +225,14 @@ tracked_companies:
     scan_method: websearch
     scan_query: '"sierra.ai" "AI" "Forward Deployed" OR "Applied" OR "Solutions" site:jobs.ashbyhq.com'
     notes: "Bret Taylor (ex-CEO Salesforce). AI customer agents."
-    enabled: false
+    enabled: true
 
   - name: Decagon
     careers_url: https://jobs.ashbyhq.com/decagon
     scan_method: websearch
     scan_query: '"decagon" "AI" "Forward Deployed" OR "Solutions" site:jobs.ashbyhq.com'
     notes: "AI customer support agents."
-    enabled: false
+    enabled: true
 
   # -- Enterprise comms & contact center --
 
@@ -292,7 +292,7 @@ tracked_companies:
     scan_method: websearch
     scan_query: '"lindy.ai" "AI" "Forward Deployed" OR "Solutions" site:jobs.ashbyhq.com'
     notes: "AI agent management platform."
-    enabled: false
+    enabled: true
 
   - name: Cognigy
     careers_url: https://careers.cognigy.com
@@ -314,14 +314,14 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/n8n'
     notes: "Berlin + remote EU/US. Workflow automation."
-    enabled: false
+    enabled: true
 
   - name: Zapier
     careers_url: https://jobs.ashbyhq.com/zapier
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/zapier'
     notes: "Remote-first. Automation platform leader."
-    enabled: false
+    enabled: true
 
   - name: Make.com (Celonis)
     careers_url: https://www.make.com/en/careers
@@ -378,28 +378,28 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:attio.com/careers OR site:jobs.ashbyhq.com/attio'
     notes: "Remote EU. AI-native CRM. Series B $52M."
-    enabled: false
+    enabled: true
 
   - name: Tinybird
     careers_url: https://jobs.ashbyhq.com/tinybird
     scan_method: websearch
     scan_query: 'site:tinybird.co/careers OR site:jobs.ashbyhq.com/tinybird'
     notes: "Remote. Real-time data platform."
-    enabled: false
+    enabled: true
 
   - name: Clarity AI
     careers_url: https://jobs.lever.co/clarity-ai
     scan_method: websearch
     scan_query: 'site:clarity.ai/careers OR site:jobs.lever.co/clarity-ai'
     notes: "Madrid/Remote. Sustainability analytics with AI."
-    enabled: false
+    enabled: true
 
   - name: Travelperk
     careers_url: https://jobs.ashbyhq.com/travelperk
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/travelperk'
     notes: "Barcelona. Business travel unicorn."
-    enabled: false
+    enabled: true
 
   # -- DACH AI labs & frontier model providers --
 
@@ -408,14 +408,14 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/AlephAlpha'
     notes: "Heidelberg DE. Sovereign European LLM provider, enterprise & government focus."
-    enabled: false
+    enabled: true
 
   - name: DeepL
     careers_url: https://jobs.ashbyhq.com/DeepL
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/DeepL'
     notes: "Cologne DE. Translation & language AI. 60+ open roles, EU/DACH heavy."
-    enabled: false
+    enabled: true
 
   - name: Black Forest Labs
     careers_url: https://job-boards.greenhouse.io/blackforestlabs
@@ -494,7 +494,7 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/lakera.ai'
     notes: "Zurich CH / SF. AI security & guardrails. Has Forward Deployed Engineer roles."
-    enabled: false
+    enabled: true
 
   - name: Scandit
     careers_url: https://job-boards.greenhouse.io/scandit
@@ -523,7 +523,7 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/photoroom'
     notes: "Paris FR. AI photo editor, Head of CV / Head of ML roles."
-    enabled: false
+    enabled: true
 
   - name: Pigment
     careers_url: https://jobs.lever.co/pigment
@@ -561,14 +561,14 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/synthesia OR site:job-boards.greenhouse.io/synthesia'
     notes: "London UK. AI video generation for enterprise, $4B valuation."
-    enabled: false
+    enabled: true
 
   - name: Faculty
     careers_url: https://jobs.ashbyhq.com/faculty
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/faculty'
     notes: "London UK. Applied AI consultancy. 80+ roles, AI Safety / MLE / Delivery."
-    enabled: false
+    enabled: true
 
   - name: Causaly
     careers_url: https://jobs.ashbyhq.com/causaly
@@ -584,14 +584,14 @@ tracked_companies:
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/lovable'
     notes: "Stockholm SE. AI app builder (text-to-app), 80+ open roles."
-    enabled: false
+    enabled: true
 
   - name: Legora
     careers_url: https://jobs.ashbyhq.com/legora
     scan_method: websearch
     scan_query: 'site:jobs.ashbyhq.com/legora'
     notes: "Stockholm SE / NYC / London. AI-native legal workspace."
-    enabled: false
+    enabled: true
 
   - name: Spotify
     careers_url: https://jobs.lever.co/spotify
