@@ -55,11 +55,21 @@ async def score_batch(
 
     jobs = [
         NormalizedJob(
-            **{k: v for k, v in j.items() if k in NormalizedJob.model_fields}
+            **{k: (v if v is not None else "")
+               for k, v in j.items()
+               if k in NormalizedJob.model_fields}
         )
         for j in unscored
     ]
     scored = await pipeline.run_stage1(jobs, profile)
+
+    for job in scored:
+        if job.score_stage_1 is not None:
+            await job_repo.update_stage1_score(
+                job.url, job.score_stage_1, job.archetype,
+                profile_id=request.profile_id
+            )
+
     kept, _ = pipeline.filter_by_threshold(scored)
 
     stage2 = await pipeline.run_stage2(kept, profile)
@@ -69,9 +79,21 @@ async def score_batch(
         if job.score_stage_2 is not None:
             await job_repo.update_scores(job.url, job.score_stage_2)
 
+    # Stage 3: LLM reasoning for top jobs
+    stage3 = await pipeline.run_stage3(stage2, profile)
+    stage3_count = sum(1 for j in stage3 if j.score_stage_3 is not None)
+
+    for job in stage3:
+        if job.score_stage_3 is not None:
+            await job_repo.update_stage3_score(
+                job.url, job.score_stage_3,
+                job.match_reasoning, job.match_highlights
+            )
+
     return ScoreResponse(
         scored=len(scored),
         stage1_passed=len(kept),
         stage2_triggered=stage2_count,
+        stage3_triggered=stage3_count,
         duration_ms=int((time.time() - start) * 1000),
     )

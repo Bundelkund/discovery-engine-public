@@ -18,4 +18,5 @@ class ScoreResponse(BaseModel):
     scored: int = 0
     stage1_passed: int = 0
     stage2_triggered: int = 0
+    stage3_triggered: int = 0
     duration_ms: int = 0

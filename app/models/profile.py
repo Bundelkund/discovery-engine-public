@@ -19,4 +19,8 @@ class UserProfile(BaseModel):
         default_factory=lambda: ["Junior", "Intern", "Trainee", "Werkstudent"]
     )
     target_roles: list[str] = Field(default_factory=list)
+    target_roles_primary: list[str] = Field(default_factory=list)
+    target_roles_secondary: list[str] = Field(default_factory=list)
+    target_locations: list[str] = Field(default_factory=list)
+    negative_domains: list[str] = Field(default_factory=list)
     cv_embedding: Optional[list[float]] = None

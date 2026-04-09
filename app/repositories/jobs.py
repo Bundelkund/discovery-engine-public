@@ -44,6 +44,17 @@ class JobRepository(BaseRepository):
                     logger.error(f"Failed to insert job: {e}")
         return inserted
 
+    async def update_stage1_score(
+        self, job_url: str, score_stage_1: int, archetype: str = None,
+        profile_id: str = None
+    ) -> None:
+        data = {"score_stage_1": score_stage_1}
+        if archetype:
+            data["archetype"] = archetype
+        if profile_id:
+            data["profile_id"] = profile_id
+        self.client.table(self.TABLE).update(data).eq("url", job_url).execute()
+
     async def update_scores(
         self, job_url: str, score_stage_2: float
     ) -> None:
@@ -51,14 +62,29 @@ class JobRepository(BaseRepository):
             {"score_stage_2": score_stage_2}
         ).eq("url", job_url).execute()
 
+    async def update_stage3_score(
+        self,
+        job_url: str,
+        score_stage_3: float,
+        match_reasoning: str = None,
+        match_highlights: list[str] = None,
+    ) -> None:
+        data = {"score_stage_3": score_stage_3}
+        if match_reasoning:
+            data["match_reasoning"] = match_reasoning
+        if match_highlights:
+            data["match_highlights"] = match_highlights
+        self.client.table(self.TABLE).update(data).eq("url", job_url).execute()
+
     async def get_unscored(
-        self, profile_id: str, source: str = None, limit: int = 200
+        self, profile_id: str, source: str = None, limit: int = 500
     ) -> list[dict]:
+        """Get all unscored jobs — both profile-owned AND legacy (profile_id IS NULL)."""
         query = (
             self.client.table(self.TABLE)
             .select("*")
-            .eq("profile_id", profile_id)
-            .is_("score_stage_2", "null")
+            .is_("score_stage_1", "null")
+            .or_(f"profile_id.eq.{profile_id},profile_id.is.null")
         )
         if source:
             query = query.eq("source", source)

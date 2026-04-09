@@ -13,14 +13,23 @@ scoring:
       stage: 1
       enabled: true
       weights:
-        archetype_match: 40    # Job matches user's chosen archetypes?
-        keyword_positive: 30   # Job contains user's desired keywords?
-        seniority: 10          # Job matches user's experience level?
-        remote_bonus: 5        # Remote/hybrid available?
-        noise_penalty: -15     # Job contains user's excluded keywords?
+        role_match: 25
+        archetype_match: 20
+        keyword_positive: 15
+        location_match: 20
+        seniority: 5
+        remote_bonus: 5
+        noise_penalty: -10
 
     - scorer_id: "embedding"
       stage: 2
       enabled: true
-      gate_threshold: 50       # Only jobs scoring >= 50 in Stage 1
+      gate_threshold: 50
       model: "text-embedding-3-small"
+
+    - scorer_id: "llm"
+      stage: 3
+      enabled: true
+      gate_threshold: 60
+      max_jobs: 30
+      model: "claude-haiku-4-5-20251001"

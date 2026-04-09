@@ -76,6 +76,46 @@ class ScoringPipeline:
                     )
         return jobs
 
+    async def run_stage3(
+        self, jobs: list[ScoredJob], profile: UserProfile
+    ) -> list[ScoredJob]:
+        """Run stage 3 LLM scorers on top-scoring jobs only."""
+        stage3_scorers = [s for s in self.stages if s.stage == 3]
+        if not stage3_scorers:
+            return jobs
+        gate = next((s for s in self.stages if s.stage == 3), None)
+        gate_threshold = gate.config.get("gate_threshold", 60) if gate else 60
+        max_jobs = gate.config.get("max_jobs", 30) if gate else 30
+        qualifying = sorted(
+            [j for j in jobs if j.score_stage_1 >= gate_threshold],
+            key=lambda j: j.score_stage_1,
+            reverse=True,
+        )[:max_jobs]
+        qualifying_urls = {j.url for j in qualifying}
+        for job in jobs:
+            if job.url not in qualifying_urls:
+                continue
+            for scorer in stage3_scorers:
+                try:
+                    result = await scorer.score(
+                        NormalizedJob(
+                            **{
+                                k: v
+                                for k, v in job.model_dump().items()
+                                if k in NormalizedJob.model_fields
+                            }
+                        ),
+                        profile,
+                    )
+                    job.score_stage_3 = result.score
+                    job.match_reasoning = result.details.get("reasoning")
+                    job.match_highlights = result.details.get("highlights")
+                except Exception as e:
+                    logger.warning(
+                        f"Stage 3 scorer {scorer.scorer_id} failed for '{job.title}': {e}"
+                    )
+        return jobs
+
     def filter_by_threshold(
         self, jobs: list[ScoredJob]
     ) -> tuple[list[ScoredJob], int]:

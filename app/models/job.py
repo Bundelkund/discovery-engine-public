@@ -52,6 +52,9 @@ class ScoredJob(BaseModel):
     archetype: str = ""
     company_domain: str = ""
     profile_id: str = ""
+    score_stage_3: Optional[float] = None
+    match_reasoning: Optional[str] = None
+    match_highlights: Optional[list[str]] = None
 
 
 class ScorerResult(BaseModel):
