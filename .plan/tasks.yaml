@@ -1,0 +1,127 @@
+id: discovery-engine-roadmap
+title: Discovery Engine — Roadmap
+updated: 2026-04-09
+profile_id: REDACTED-PROFILE
+
+completed:
+  - id: DE-01
+    title: Ashby + Lever Scrapers
+    description: 26 Ashby + 9 Lever companies via JSON API
+    completed: 2026-04-09
+
+  - id: DE-02
+    title: Single Scoring Service
+    description: >
+      3-Stufen Pipeline (Keyword → Embedding → LLM Reasoning).
+      7 Dimensionen: role_match, archetype, keyword (title>desc),
+      location, seniority, remote, noise. Scored alle 2.400 Jobs
+      inkl. legacy Indeed. JobHunt Worker Logik portiert.
+    completed: 2026-04-09
+
+  - id: DE-03
+    title: n8n Workflows (Scoring + Enrichment + Cleanup)
+    description: >
+      3 Workflows erstellt: Post-Scrape Scoring (13:00),
+      Company Enrichment (14:00), Job Cleanup 14 Tage (06:00).
+      Noch inaktiv bis Docker-Deployment stabil.
+    completed: 2026-04-09
+
+  - id: DE-04
+    title: Docker Deployment auf Coolify
+    description: >
+      GitHub Repo erstellt, Port 8091, deployed auf Coolify
+      im Projekt WonderApply. anthropic Dependency nachgezogen.
+    completed: 2026-04-09
+
+backlog:
+  - id: DE-05
+    title: JobSpy Worker in Discovery Engine integrieren
+    priority: P2
+    description: >
+      Der jobspy-worker (jobhunt repo, Coolify Port 8082) soll langfristig
+      aufgelöst werden. Indeed/Glassdoor/Google-Scraping via python-jobspy
+      existiert bereits als DE-Modul (app/sources/indeed.py). Was fehlt:
+      - Metajob.de Scraper (Playwright, Anti-Bot) → eigener Container oder Sidecar
+      - Kimeta.de Scraper (Playwright, __NEXT_DATA__) → gleich
+      - RemoteOK Scraper (einfacher API-Call) → direkt portierbar
+      - /scrape/enrich (Playwright für fehlende Descriptions) → Sidecar
+      - Proxy-Infrastruktur (Webshare/BrightData für LinkedIn)
+      Entscheidung: Playwright-Scrapers als eigener Sidecar-Container
+      neben der DE, oder komplett im Worker belassen.
+    blocked_by: Playwright-Container-Architektur (DE-06)
+
+  - id: DE-06
+    title: Playwright Agents aus CareerOps integrierbar machen
+    priority: P2
+    description: >
+      CareerOps nutzt Playwright via Claude Code MCP Tools (browser_navigate,
+      browser_snapshot). Diese Features laufen im User-Browser, nicht headless.
+      Herausforderungen:
+      - Portal Scanning: Claude navigiert SPAs intelligent → als Service
+        müsste das deterministische Extraktion werden oder ein LLM-gesteuerter
+        Headless-Browser (z.B. browser-use, AgentQL)
+      - Offer Verification: Prüft ob Stelle noch online → als API machbar
+      - Apply Mode: Human-in-the-loop, kann nicht automatisiert werden
+      - PDF Generation: Lokal, bleibt in CareerOps
+      Möglicher Ansatz: Headless Playwright Container mit LLM-Steuerung
+      für Portal Scanning + Verification. Apply bleibt in CareerOps.
+      Evaluieren: browser-use, Stagehand, AgentQL als Framework.
+    research_needed: true
+
+  - id: DE-07
+    title: Google Job Search via n8n + Tavily
+    priority: P1
+    description: >
+      Aktiv nach Jobs suchen statt nur Portale zu scrapen.
+      Ansätze:
+      1. Tavily Search API in n8n → strukturierte Job-Ergebnisse
+         Queries: "Agile Coach Berlin", "KI Trainer Berlin",
+         "AI Enablement Manager Berlin remote"
+      2. Google Jobs API (SerpAPI oder Serper.dev)
+      3. Google Custom Search Engine mit site:-Filtern
+      Flow: n8n Workflow → Tavily/Serper → Parse → POST /jobs/import
+      an Discovery Engine → Scoring Pipeline.
+      Braucht: Neuen /jobs/import Endpoint in DE der externe
+      Job-Daten entgegennimmt (ohne Scraper-Source).
+    next_step: Tavily API Key besorgen, n8n Workflow prototypen
+
+  - id: DE-08
+    title: "Culture-Fit Scoring + Initiativbewerbungs-Modus"
+    priority: P1
+    description: >
+      Problem: Die Top-Jobs sind zu technisch/keyword-lastig. Ein Agile Coach
+      oder KI-Trainer findet sich nicht in klassischen Stellenanzeigen wieder.
+      Der Mehrwert liegt im "Ich löse euer Problem, auch wenn ihr es noch
+      nicht in der Ausschreibung habt."
+
+      Zwei neue Scoring-Modi:
+
+      1. CULTURE-FIT SCORER (Stage 1 Erweiterung):
+         - Company Values vs. Profil-Werte (aus company_profiles.cvf_scores)
+         - Branche/Teamgröße-Match
+         - Hiring Signals (wächst das Team? Transformation im Gange?)
+         - Scoring-Dimension: culture_fit (10-15% Gewicht)
+         - Datenquelle: Company Enrichment (Hunter.io, CVF, LinkedIn)
+
+      2. INITIATIVBEWERBUNGS-DETEKTOR:
+         - Erkennt Firmen die KEIN passendes Posting haben, aber:
+           a) In einer Transformation stecken (Pressemeldungen, LinkedIn)
+           b) AI/Digitalisierung als Thema haben aber keinen Coach/Trainer
+           c) Schnell wachsen (Hiring Signal > X)
+           d) In der richtigen Branche + Stadt sind
+         - Output: "Diese Firma hat kein Posting, aber braucht dich"
+         - Datenquellen: company_profiles + Tavily Research + LinkedIn
+         - Eigener Endpoint: /discover/opportunities
+
+      3. PROBLEM-SOLVER PROMPT (Stage 3 LLM Erweiterung):
+         - Statt "passt dein CV zum JD?" →
+           "Welches Problem hat diese Firma, das du lösen kannst?"
+         - LLM analysiert: Firma + Branche + Posting →
+           formuliert Pitch: "Sie suchen X, aber eigentlich brauchen
+           Sie jemanden der Y kann — und das bin ich, weil Z"
+         - Speichert: match_pitch (Text) neben match_reasoning
+
+    next_step: >
+      Phase 1: Culture-Fit Dimension in Keyword-Scorer (Gewicht aus
+      company_profiles). Phase 2: Initiativbewerbungs-Endpoint.
+      Phase 3: Problem-Solver Prompt in LLM Scorer.
