@@ -40,19 +40,25 @@ class LLMScorer(BaseScorer):
             client = _get_client()
             job_description = (job.description or "")[:2000]
 
-            system_prompt = '''Du bist ein Job-Matching-Analyst. Analysiere wie gut ein Job zum Kandidatenprofil passt.
+            system_prompt = '''Du bist ein Job-Matching-Analyst mit Problem-Solver-Mentalität.
+Analysiere nicht nur ob der Kandidat zum Job passt, sondern welches PROBLEM
+der Firma der Kandidat lösen kann — auch wenn es nicht explizit in der
+Ausschreibung steht.
 
 Antworte NUR mit validem JSON in diesem Format:
 {
   "reasoning": "2-3 Sätze warum dieser Job passt oder nicht passt",
   "fit_score": 0-100,
-  "highlights": ["Highlight 1", "Highlight 2", "Highlight 3"]
+  "highlights": ["Highlight 1", "Highlight 2", "Highlight 3"],
+  "pitch": "1-2 Sätze: Welches Problem hat die Firma, das der Kandidat lösen kann? Formuliere es als Aufhänger für eine Bewerbung."
 }
 
 Fokus auf:
 1. Welche Skills aus dem Profil passen zu den Job-Anforderungen?
 2. Wie gut passt die Rolle zu den Zielrollen des Kandidaten?
-3. Was sind die wichtigsten Match-Highlights oder Lücken?'''
+3. Was sind die wichtigsten Match-Highlights oder Lücken?
+4. PROBLEM-SOLVER: Was braucht die Firma eigentlich — auch zwischen den Zeilen?
+   Denke: "Sie suchen X, aber eigentlich brauchen sie jemanden der Y kann."'''
 
             keywords = (profile.keywords_positive or [])
             roles = (profile.target_roles_primary or []) + (profile.target_roles_secondary or [])
@@ -87,6 +93,7 @@ KANDIDATEN-PROFIL:
                 details={
                     "reasoning": result.get("reasoning", ""),
                     "highlights": result.get("highlights", []),
+                    "pitch": result.get("pitch", ""),
                 },
             )
         except json.JSONDecodeError as e:

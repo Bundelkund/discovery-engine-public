@@ -68,12 +68,15 @@ class JobRepository(BaseRepository):
         score_stage_3: float,
         match_reasoning: str = None,
         match_highlights: list[str] = None,
+        match_pitch: str = None,
     ) -> None:
         data = {"score_stage_3": score_stage_3}
         if match_reasoning:
             data["match_reasoning"] = match_reasoning
         if match_highlights:
             data["match_highlights"] = match_highlights
+        if match_pitch:
+            data["match_pitch"] = match_pitch
         self.client.table(self.TABLE).update(data).eq("url", job_url).execute()
 
     async def get_unscored(

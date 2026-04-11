@@ -55,6 +55,7 @@ class ScoredJob(BaseModel):
     score_stage_3: Optional[float] = None
     match_reasoning: Optional[str] = None
     match_highlights: Optional[list[str]] = None
+    match_pitch: Optional[str] = None
 
 
 class ScorerResult(BaseModel):

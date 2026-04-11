@@ -110,6 +110,7 @@ class ScoringPipeline:
                     job.score_stage_3 = result.score
                     job.match_reasoning = result.details.get("reasoning")
                     job.match_highlights = result.details.get("highlights")
+                    job.match_pitch = result.details.get("pitch")
                 except Exception as e:
                     logger.warning(
                         f"Stage 3 scorer {scorer.scorer_id} failed for '{job.title}': {e}"

@@ -87,7 +87,8 @@ async def score_batch(
         if job.score_stage_3 is not None:
             await job_repo.update_stage3_score(
                 job.url, job.score_stage_3,
-                job.match_reasoning, job.match_highlights
+                job.match_reasoning, job.match_highlights,
+                job.match_pitch
             )
 
     return ScoreResponse(
