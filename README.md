@@ -8,10 +8,11 @@ Job discovery service — scrapes, scores, and enriches job postings from multip
 n8n (cron) → /scrape/{source} → Dedup → Score Stage 1 → Store → Score Stage 2 → Enrich
 ```
 
-- **Sources**: Indeed (python-jobspy), Greenhouse (API), Adzuna (API), RSS feeds
-- **Scoring**: Stage 1 = keyword/archetype matching (instant), Stage 2 = embedding similarity (OpenAI)
-- **Enrichment**: Domain resolution, Hunter.io company data, CVF (Culture-Values Fit via LLM)
+- **Sources**: Greenhouse, Ashby, Lever, Personio (ATS APIs), Adzuna, RSS, Google Jobs (Tavily), BA Jobboerse
+- **Scoring**: Stage 1 = keyword/archetype (instant), Stage 2 = embedding (OpenAI), Stage 3 = LLM role analysis (Claude Haiku)
+- **Enrichment**: Domain resolution, Hunter.io company data, CVF (Culture-Values Fit via LLM), Kununu, Tavily Signals
 - **Storage**: Supabase (shared DB with WonderApply + JobHunt)
+- **Consumers**: WonderApply (via REST API), Apply Skill (CLI)
 
 Key patterns: Registry with self-registration decorators, config-driven pipelines (YAML), repository pattern for DB access.
 
@@ -37,16 +38,33 @@ All endpoints (except /health) require `X-Api-Key` header matching `DE_API_KEY`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Service health + registered components |
-| POST | `/scrape/{source}` | Scrape jobs from source (indeed/greenhouse/adzuna/rss) |
+| POST | `/scrape/{source}` | Scrape jobs from source (greenhouse/ashby/lever/personio/rss) |
 | POST | `/score/batch` | Score unscored jobs for a profile |
 | POST | `/enrich/{domain}` | Enrich a company by domain |
+| POST | `/discover/opportunities` | Proactive company recommendations |
+| **GET** | **`/jobs`** | **Paginated job list with scores (for WonderApply)** |
+| **GET** | **`/jobs/{id}`** | **Job detail with all score fields** |
+| **GET** | **`/companies/{domain}`** | **Company profile with Hunter + CVF + signals** |
 | POST | `/profiles` | Create a scoring profile |
 | GET | `/profiles` | List all profiles |
 | GET | `/profiles/{id}` | Get profile details |
 | PUT | `/profiles/{id}` | Update profile |
 | DELETE | `/profiles/{id}` | Delete profile |
+| **POST** | **`/profiles/sync`** | **Sync WonderApply profile for scoring** |
 
 Swagger docs: `http://localhost:8091/docs`
+
+### WonderApply Provider API
+
+The bold endpoints above form the **Provider API** — WonderApply consumes jobs, scores, and company data exclusively through these REST endpoints instead of querying the shared Supabase directly.
+
+```
+WonderApply ──GET /jobs──→ Discovery Engine ──SELECT──→ Supabase
+WonderApply ──GET /companies/{domain}──→ Discovery Engine
+WonderApply ──POST /profiles/sync──→ Discovery Engine (on profile update)
+```
+
+See `florian-knowledge/dev/projects/discovery-engine/.specs/wa-provider-api/` for the full spec.
 
 ## Configuration
 
@@ -61,5 +79,5 @@ YAML configs in `config/`:
 
 ```bash
 docker compose up -d
-curl http://localhost:8090/health
+curl http://localhost:8091/health
 ```

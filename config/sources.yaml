@@ -25,3 +25,6 @@ sources:
   lever:
     enabled: true
     portals_file: "config/portals.yaml"
+  personio:
+    enabled: true
+    portals_file: "config/portals.yaml"

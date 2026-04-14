@@ -610,3 +610,30 @@ tracked_companies:
     api: https://boards-api.greenhouse.io/v1/boards/amplemarket/jobs
     notes: "Lisbon PT / Remote. AI-native sales platform."
     enabled: true
+
+  # -- Personio DACH --
+
+  - name: amberra
+    careers_url: https://amberra.jobs.personio.de
+    notes: "Berlin. Beratung, Venture Building, AI Coaching."
+    enabled: true
+
+  - name: Lichtblick
+    careers_url: https://lichtblick-se.jobs.personio.de
+    notes: "Hamburg. Ökostrom-Anbieter, Digitalisierung."
+    enabled: true
+
+  - name: Thermondo
+    careers_url: https://thermondo.jobs.personio.de
+    notes: "Berlin. Climate-Tech, Digital Transformation."
+    enabled: true
+
+  - name: Personio
+    careers_url: https://personio-se.jobs.personio.de
+    notes: "München. HR-Tech, eat their own dogfood."
+    enabled: true
+
+  - name: tomorrow
+    careers_url: https://tomorrow.jobs.personio.de
+    notes: "Hamburg. Nachhaltige Banking-App."
+    enabled: true

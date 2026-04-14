@@ -1,10 +1,14 @@
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.dependencies import get_supabase, require_api_key
+from app.models.responses import ProfileSyncRequest, ProfileSyncResponse
 from app.repositories.profiles import ProfileRepository
+
+logger = logging.getLogger(__name__)
 
 profiles_router = APIRouter(prefix="/profiles", tags=["profiles"])
 
@@ -80,3 +84,43 @@ async def delete_profile(profile_id: str, supabase=Depends(get_supabase)):
     if not success:
         raise HTTPException(status_code=404, detail="Profile not found")
     return {"status": "deleted"}
+
+
+@profiles_router.post("/sync", dependencies=[Depends(require_api_key)])
+async def sync_profile(
+    request: ProfileSyncRequest,
+    supabase=Depends(get_supabase),
+) -> ProfileSyncResponse:
+    """Sync a WonderApply profile into Discovery Engine for scoring."""
+    repo = ProfileRepository(supabase)
+
+    # Map WA fields directly to DB column names (not via repo.create rename)
+    db_data = {
+        "name": request.name,
+        "cv_text": request.cv_text,
+        "keywords_positive_tech": request.keywords_positive,
+        "keywords_negative": request.keywords_negative,
+        "target_roles": request.target_roles,
+        "target_roles_primary": request.target_roles_primary,
+        "target_roles_secondary": request.target_roles_secondary,
+        "target_locations": request.target_locations,
+        "negative_domains": request.negative_domains,
+    }
+
+    existing = await repo.get(request.user_id)
+    if existing:
+        await repo.update(request.user_id, db_data)
+        status = "updated"
+    else:
+        # Direct insert — bypass repo.create() which has its own field rename logic
+        create_data = {**db_data, "id": request.user_id, "user_id": request.user_id}
+        repo.client.table(repo.TABLE).insert(create_data).execute()
+        status = "created"
+
+    logger.info(f"Profile synced: {request.user_id} ({status})")
+
+    return ProfileSyncResponse(
+        profile_id=request.user_id,
+        status=status,
+        scoring_ready=True,
+    )

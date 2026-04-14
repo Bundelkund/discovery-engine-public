@@ -54,3 +54,29 @@ class CompanyRepository(BaseRepository):
         return datetime.now(timezone.utc) - enriched_dt > timedelta(
             days=max_age_days
         )
+
+    async def get_with_watchlist(self, domain: str) -> dict | None:
+        """Get company profile merged with watchlist signals."""
+        company = await self.get(domain)
+        if not company:
+            return None
+
+        # Fetch watchlist signals separately
+        signals = None
+        try:
+            watchlist_result = (
+                self.client.table("company_watchlist")
+                .select(
+                    "transformation_signal_score, signal_type, "
+                    "signal_evidence, kununu_score, kununu_sentiment"
+                )
+                .eq("domain", domain)
+                .execute()
+            )
+            if watchlist_result.data:
+                signals = watchlist_result.data[0]
+        except Exception as e:
+            logger.warning(f"Watchlist query failed for {domain}: {e}")
+
+        company["signals"] = signals
+        return company

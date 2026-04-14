@@ -86,42 +86,71 @@ backlog:
     next_step: Tavily API Key besorgen, n8n Workflow prototypen
 
   - id: DE-08
-    title: "Culture-Fit Scoring + Initiativbewerbungs-Modus"
+    title: "Tavily Signal-Pipeline — Firmen-Watchlist + Transformation-Erkennung"
     priority: P1
+    status: ready
     description: >
-      Problem: Die Top-Jobs sind zu technisch/keyword-lastig. Ein Agile Coach
-      oder KI-Trainer findet sich nicht in klassischen Stellenanzeigen wieder.
-      Der Mehrwert liegt im "Ich löse euer Problem, auch wenn ihr es noch
-      nicht in der Ausschreibung habt."
+      n8n Workflow der täglich 50-100 DACH-Firmen via Tavily durchsucht:
+      "{firma} KI Transformation Digitalisierung 2026". Claude klassifiziert
+      die Ergebnisse nach Signal-Typ (AI-Strategie=0.9, New Work=0.5,
+      Innovation=0.2) und speichert einen transformation_signal_score
+      in company_profiles.
 
-      Zwei neue Scoring-Modi:
+      Kein Code in der DE nötig — nur n8n + Tavily + Claude + Supabase.
+      Ergebnis: Firmen die gerade in einer AI-Transformation stecken
+      werden sichtbar, auch ohne passende Stellenanzeige.
+    tech: n8n, Tavily API ($0-20/Monat), Claude Haiku, Supabase
+    next_step: Tavily API Key besorgen, n8n Workflow prototypen
+    research_source: Deep Research Report 2026-04-11 — Kategorie 4.2
 
-      1. CULTURE-FIT SCORER (Stage 1 Erweiterung):
-         - Company Values vs. Profil-Werte (aus company_profiles.cvf_scores)
-         - Branche/Teamgröße-Match
-         - Hiring Signals (wächst das Team? Transformation im Gange?)
-         - Scoring-Dimension: culture_fit (10-15% Gewicht)
-         - Datenquelle: Company Enrichment (Hunter.io, CVF, LinkedIn)
+  - id: DE-09
+    title: "Kununu Culture-Fit Integration via Apify"
+    priority: P1
+    status: ready
+    description: >
+      Kununu-Daten via Apify Actor (radeance/kununu-reviews-scraper)
+      für Firmen in der Watchlist holen. Liefert:
+      - Kununu-Score (1-5)
+      - Culture-Keywords aus Reviews
+      - "Happy with wage" Prozent
+      - Sentiment-Summary
 
-      2. INITIATIVBEWERBUNGS-DETEKTOR:
-         - Erkennt Firmen die KEIN passendes Posting haben, aber:
-           a) In einer Transformation stecken (Pressemeldungen, LinkedIn)
-           b) AI/Digitalisierung als Thema haben aber keinen Coach/Trainer
-           c) Schnell wachsen (Hiring Signal > X)
-           d) In der richtigen Branche + Stadt sind
-         - Output: "Diese Firma hat kein Posting, aber braucht dich"
-         - Datenquellen: company_profiles + Tavily Research + LinkedIn
-         - Eigener Endpoint: /discover/opportunities
+      Speichern in company_profiles.cvf_scores (JSONB).
+      Dann neue Scoring-Dimension culture_fit (10% Gewicht) im
+      Keyword-Scorer die company_profiles.cvf_scores gegen
+      Profil-Werte matched.
 
-      3. PROBLEM-SOLVER PROMPT (Stage 3 LLM Erweiterung):
-         - Statt "passt dein CV zum JD?" →
-           "Welches Problem hat diese Firma, das du lösen kannst?"
-         - LLM analysiert: Firma + Branche + Posting →
-           formuliert Pitch: "Sie suchen X, aber eigentlich brauchen
-           Sie jemanden der Y kann — und das bin ich, weil Z"
-         - Speichert: match_pitch (Text) neben match_reasoning
+      Apify Free Tier = $5/Monat = ~200 Lookups.
+    tech: Apify (kununu-reviews-scraper), Supabase, DE Keyword Scorer
+    next_step: Apify Account + Actor testen, company_profiles Schema erweitern
+    research_source: Deep Research Report 2026-04-11 — Kategorie 1.4, 3.3
 
-    next_step: >
-      Phase 1: Culture-Fit Dimension in Keyword-Scorer (Gewicht aus
-      company_profiles). Phase 2: Initiativbewerbungs-Endpoint.
-      Phase 3: Problem-Solver Prompt in LLM Scorer.
+  - id: DE-10
+    title: "Problem-Solver Prompt + /discover/opportunities Endpoint"
+    priority: P1
+    status: blocked
+    blocked_by: DE-08, DE-09
+    description: >
+      Zwei Erweiterungen die auf den Signal- und Culture-Daten aufbauen:
+
+      1. PROBLEM-SOLVER PROMPT (Stage 3 LLM Erweiterung):
+         Statt "passt dein CV zum JD?" → "Welches Problem hat diese Firma,
+         das du lösen kannst?" Claude analysiert Firma + Branche + Posting
+         und formuliert einen Pitch: "Sie suchen X, aber eigentlich brauchen
+         Sie jemanden der Y kann — und das bin ich, weil Z."
+         Speichert: match_pitch neben match_reasoning.
+
+      2. /discover/opportunities ENDPOINT (Initiativbewerbungs-Detektor):
+         Neuer DE-Endpoint der Firmen OHNE passendes Posting rankt:
+         - Input: profile_id
+         - Logik: company_profiles mit hohem transformation_signal_score
+           + gutem culture_fit + passender Branche/Stadt
+           MINUS Firmen die schon ein passendes Posting haben
+         - Output: Top 10 Firmen mit outreach_hook + best_angle
+         - LLM-Prompt: "Braucht {firma} gerade einen {candidate_role}?
+           Confidence, Reasoning, Aufhänger für Initiativbewerbung"
+
+      Das ist der Gamechanger: weg von "matche mich gegen JDs" hin zu
+      "welche Firma braucht mich, auch wenn sie es noch nicht weiß."
+    tech: DE Stage 3 LLM Scorer, FastAPI Endpoint, Supabase
+    research_source: Deep Research Report 2026-04-11 — Kategorie 4.1, 4.3

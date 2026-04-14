@@ -4,3 +4,4 @@ from app.sources import adzuna as adzuna
 from app.sources import rss as rss
 from app.sources import ashby as ashby
 from app.sources import lever as lever
+from app.sources import personio as personio

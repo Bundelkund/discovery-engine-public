@@ -15,6 +15,8 @@ from app.routes.score import score_router
 from app.routes.enrich import enrich_router
 from app.routes.profiles import profiles_router
 from app.routes.discover import discover_router
+from app.routes.jobs_api import jobs_api_router
+from app.routes.companies_api import companies_api_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,3 +41,5 @@ app.include_router(score_router)
 app.include_router(enrich_router)
 app.include_router(profiles_router)
 app.include_router(discover_router)
+app.include_router(jobs_api_router)
+app.include_router(companies_api_router)
