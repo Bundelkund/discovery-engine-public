@@ -94,6 +94,30 @@ class JobRepository(BaseRepository):
         result = query.limit(limit).execute()
         return result.data or []
 
+    async def get_needs_rescore(
+        self,
+        profile_id: str,
+        stage1_min: int = 50,
+        source: str = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """Get jobs with stage_1 >= stage1_min that still need stage_2 or stage_3.
+
+        Used by the rescore path to upgrade jobs that were scored before the
+        Stage 2/3 pipeline was wired up.
+        """
+        query = (
+            self.client.table(self.TABLE)
+            .select("*")
+            .gte("score_stage_1", stage1_min)
+            .or_("score_stage_2.is.null,score_stage_3.is.null")
+            .or_(f"profile_id.eq.{profile_id},profile_id.is.null")
+        )
+        if source:
+            query = query.eq("source", source)
+        result = query.order("score_stage_1", desc=True).limit(limit).execute()
+        return result.data or []
+
     # --- WA Provider API Methods ---
 
     async def list_jobs(

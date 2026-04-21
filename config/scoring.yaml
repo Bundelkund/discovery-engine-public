@@ -32,4 +32,4 @@ scoring:
       enabled: true
       gate_threshold: 60
       max_jobs: 30
-      model: "claude-haiku-4-5-20251001"
+      model: "gpt-4o-mini"

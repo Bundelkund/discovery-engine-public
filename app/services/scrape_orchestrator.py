@@ -111,6 +111,19 @@ class ScrapeOrchestrator:
                             job.url, job.score_stage_2
                         )
 
+            # 7b. Score stage 3 (LLM role analysis for top stage-1 scorers)
+            if kept:
+                await pipeline.run_stage3(kept, profile)
+                for job in kept:
+                    if job.score_stage_3 is not None:
+                        await self.job_repo.update_stage3_score(
+                            job.url,
+                            job.score_stage_3,
+                            job.match_reasoning,
+                            job.match_highlights,
+                            job.match_pitch,
+                        )
+
             # 8. Enrich new companies
             try:
                 domains: set[str] = set()

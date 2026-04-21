@@ -1,8 +1,7 @@
 import json
 import logging
-from typing import Optional
 
-import anthropic
+from openai import AsyncOpenAI
 
 from app.config import get_settings
 from app.models.job import NormalizedJob, ScorerResult
@@ -12,18 +11,6 @@ from app.scoring.base import BaseScorer
 
 logger = logging.getLogger(__name__)
 
-_client: Optional[anthropic.Anthropic] = None
-
-
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        settings = get_settings()
-        if not settings.anthropic_api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY not configured")
-        _client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    return _client
-
 
 @ScorerRegistry.register("llm")
 class LLMScorer(BaseScorer):
@@ -32,12 +19,21 @@ class LLMScorer(BaseScorer):
 
     def __init__(self, config: dict | None = None):
         self.config = config or {}
-        self.model = self.config.get("model", "claude-haiku-4-5-20251001")
+        self.model = self.config.get("model", "gpt-4o-mini")
         self.max_jobs = self.config.get("max_jobs", 30)
+        self._client: AsyncOpenAI | None = None
+
+    @property
+    def client(self) -> AsyncOpenAI:
+        if self._client is None:
+            settings = get_settings()
+            if not settings.openai_api_key:
+                raise RuntimeError("OPENAI_API_KEY not configured")
+            self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        return self._client
 
     async def score(self, job: NormalizedJob, profile: UserProfile) -> ScorerResult:
         try:
-            client = _get_client()
             job_description = (job.description or "")[:2000]
 
             system_prompt = '''Du bist ein Job-Matching-Analyst mit Problem-Solver-Mentalität.
@@ -60,8 +56,10 @@ Fokus auf:
 4. PROBLEM-SOLVER: Was braucht die Firma eigentlich — auch zwischen den Zeilen?
    Denke: "Sie suchen X, aber eigentlich brauchen sie jemanden der Y kann."'''
 
-            keywords = (profile.keywords_positive or [])
-            roles = (profile.target_roles_primary or []) + (profile.target_roles_secondary or [])
+            keywords = profile.keywords_positive or []
+            roles = (profile.target_roles_primary or []) + (
+                profile.target_roles_secondary or []
+            )
             cv_summary = (profile.cv_text or "")[:1000]
 
             user_content = f'''JOB:
@@ -76,14 +74,17 @@ KANDIDATEN-PROFIL:
 - Archetypes: {', '.join(f'{k} ({v})' for k, v in (profile.archetypes or {}).items())}
 {f"- CV: {cv_summary}" if cv_summary else ""}'''
 
-            message = client.messages.create(
+            response = await self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=500,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_content}]
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
             )
 
-            response_text = message.content[0].text
+            response_text = response.choices[0].message.content or "{}"
             result = json.loads(response_text)
 
             return ScorerResult(
@@ -98,7 +99,17 @@ KANDIDATEN-PROFIL:
             )
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response: {e}")
-            return ScorerResult(scorer_id=self.scorer_id, stage=self.stage, score=0.0, details={"error": str(e)})
+            return ScorerResult(
+                scorer_id=self.scorer_id,
+                stage=self.stage,
+                score=0.0,
+                details={"error": str(e)},
+            )
         except Exception as e:
             logger.error(f"LLM scoring failed for '{job.title}': {e}")
-            return ScorerResult(scorer_id=self.scorer_id, stage=self.stage, score=0.0, details={"error": str(e)})
+            return ScorerResult(
+                scorer_id=self.scorer_id,
+                stage=self.stage,
+                score=0.0,
+                details={"error": str(e)},
+            )

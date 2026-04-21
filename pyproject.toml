@@ -16,7 +16,6 @@ dependencies = [
     "python-jobspy",
     "feedparser",
     "openai",
-    "anthropic",
     "numpy",
     "pyyaml",
 ]

@@ -123,10 +123,10 @@ async def discover_opportunities(
     # LLM pitch for top candidates
     opportunities = []
     settings = get_settings()
-    if settings.anthropic_api_key and top_candidates:
-        import anthropic
+    if settings.openai_api_key and top_candidates:
+        from openai import OpenAI
 
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        client = OpenAI(api_key=settings.openai_api_key)
         roles = (profile.target_roles_primary or []) + (
             profile.target_roles_secondary or []
         )
@@ -134,20 +134,24 @@ async def discover_opportunities(
 
         for candidate in top_candidates:
             try:
-                message = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
                     max_tokens=300,
-                    system=(
-                        "Du bist ein Company-Intelligence-Analyst. "
-                        "Bestimme ob diese Firma gerade einen "
-                        f"{role_str} braucht — auch ohne Stellenanzeige. "
-                        "Antworte NUR mit JSON: "
-                        '{"pitch": "1-2 Sätze: Welches Problem hat die '
-                        'Firma, das der Kandidat lösen kann?", '
-                        '"outreach_hook": "Ein Satz Aufhänger für '
-                        'Initiativbewerbung"}'
-                    ),
+                    response_format={"type": "json_object"},
                     messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Du bist ein Company-Intelligence-Analyst. "
+                                "Bestimme ob diese Firma gerade einen "
+                                f"{role_str} braucht — auch ohne Stellenanzeige. "
+                                "Antworte NUR mit JSON: "
+                                '{"pitch": "1-2 Sätze: Welches Problem hat die '
+                                'Firma, das der Kandidat lösen kann?", '
+                                '"outreach_hook": "Ein Satz Aufhänger für '
+                                'Initiativbewerbung"}'
+                            ),
+                        },
                         {
                             "role": "user",
                             "content": (
@@ -159,13 +163,11 @@ async def discover_opportunities(
                                 f"({candidate.get('kununu_sentiment', 'unbekannt')})\n\n"
                                 f"Kandidat: {role_str}"
                             ),
-                        }
+                        },
                     ],
                 )
-                text = message.content[0].text
-                parsed = json.loads(
-                    text[text.index("{") : text.rindex("}") + 1]
-                )
+                text = response.choices[0].message.content or "{}"
+                parsed = json.loads(text)
                 candidate["pitch"] = parsed.get("pitch", "")
                 candidate["outreach_hook"] = parsed.get("outreach_hook", "")
             except Exception as e:
