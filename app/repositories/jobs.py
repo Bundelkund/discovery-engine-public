@@ -1,4 +1,5 @@
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 from app.models.job import ScoredJob
@@ -9,6 +10,70 @@ logger = logging.getLogger(__name__)
 
 class JobRepository(BaseRepository):
     TABLE = "jobs"
+
+    def get_coverage_metrics(self) -> dict:
+        """Return coverage metrics for /health.
+
+        Each sub-query is wrapped individually so a partial failure still
+        yields the metrics that did succeed. Called once per /health request.
+        """
+        metrics = {
+            "jobs_total": 0,
+            "location_normalized_pct": 0.0,
+            "dq_flags_pct": 0.0,
+            "jobs_last_24h": 0,
+        }
+
+        total = 0
+        try:
+            res = self.client.table(self.TABLE).select("id", count="exact").limit(1).execute()
+            total = res.count or 0
+            metrics["jobs_total"] = total
+        except Exception as exc:
+            logger.warning("coverage_total_failed", extra={"error": str(exc)})
+
+        if total > 0:
+            try:
+                res = (
+                    self.client.table(self.TABLE)
+                    .select("id", count="exact")
+                    .not_.is_("location_normalized", "null")
+                    .limit(1)
+                    .execute()
+                )
+                loc_count = res.count or 0
+                metrics["location_normalized_pct"] = round(100.0 * loc_count / total, 2)
+            except Exception as exc:
+                logger.warning("coverage_location_pct_failed", extra={"error": str(exc)})
+
+            try:
+                # dq_flags default is {}; count rows where it has been populated.
+                res = (
+                    self.client.table(self.TABLE)
+                    .select("id", count="exact")
+                    .neq("dq_flags", "{}")
+                    .limit(1)
+                    .execute()
+                )
+                dq_count = res.count or 0
+                metrics["dq_flags_pct"] = round(100.0 * dq_count / total, 2)
+            except Exception as exc:
+                logger.warning("coverage_dq_pct_failed", extra={"error": str(exc)})
+
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            res = (
+                self.client.table(self.TABLE)
+                .select("id", count="exact")
+                .gte("scraped_at", cutoff)
+                .limit(1)
+                .execute()
+            )
+            metrics["jobs_last_24h"] = res.count or 0
+        except Exception as exc:
+            logger.warning("coverage_last24h_failed", extra={"error": str(exc)})
+
+        return metrics
 
     async def insert_batch(self, jobs: list[ScoredJob], profile_id: str) -> int:
         if not jobs:
@@ -31,6 +96,13 @@ class JobRepository(BaseRepository):
                     "company_domain": job.company_domain,
                     "profile_id": profile_id,
                     "scraped_at": job.posted_at.isoformat() if job.posted_at else None,
+                    # Bundle-B additive columns
+                    "location_normalized": job.location_normalized,
+                    "location_lat": job.location_lat,
+                    "location_lon": job.location_lon,
+                    "is_remote": job.is_remote,
+                    "is_hybrid": job.is_hybrid,
+                    "dq_flags": job.dq_flags or {},
                 }
             )
         inserted = 0
@@ -42,7 +114,10 @@ class JobRepository(BaseRepository):
                 if "23505" in str(e):
                     logger.debug(f"Duplicate skipped: {row['url'][:60]}")
                 else:
-                    logger.error(f"Failed to insert job: {e}")
+                    logger.error(
+                        "insert_job_failed",
+                        extra={"url": row["url"][:80], "error": str(e)},
+                    )
         return inserted
 
     async def update_stage1_score(
@@ -323,6 +398,25 @@ class JobRepository(BaseRepository):
         if max_salary is not None:
             q = q.lte("salary_max", max_salary).not_.is_("salary_max", "null")
 
+        # -- max_distance_km: SQL bounding-box prefilter (F5) --
+        # Dramatically reduces rows before Haversine post-filter. Excludes rows
+        # with NULL location_lat/lon since they cannot satisfy a distance query.
+        bbox_coords: tuple[float, float] | None = None
+        if max_distance_km is not None and location is not None:
+            bbox_coords = _geocode_city(location)
+            if bbox_coords is not None:
+                lat0, lon0 = bbox_coords
+                delta_lat = max_distance_km / 111.0
+                # Longitude degrees shrink with latitude; guard against lat=±90.
+                cos_lat = max(0.01, math.cos(math.radians(lat0)))
+                delta_lon = max_distance_km / (111.0 * cos_lat)
+                q = (
+                    q.gte("location_lat", lat0 - delta_lat)
+                    .lte("location_lat", lat0 + delta_lat)
+                    .gte("location_lon", lon0 - delta_lon)
+                    .lte("location_lon", lon0 + delta_lon)
+                )
+
         # -- Sort --
         if sort == "score_keyword":
             # NULL-last for score_stage_1
@@ -338,31 +432,9 @@ class JobRepository(BaseRepository):
         rows: list[dict] = res.data or []
         total: int = res.count if res.count is not None else len(rows)
 
-        # -- max_distance_km: Python-Haversine post-query filter --
-        # PostGIS is NOT installed.  location_lat/location_lon are Phase-4
-        # migration columns — access via getattr with None fallback.
-        if max_distance_km is not None and location is not None:
-            coords = _geocode_city(location)
-            if coords is None:
-                logger.warning(
-                    "max_distance_km_skipped",
-                    extra={"reason": "location_not_geocodable", "location": location},
-                )
-            else:
-                lat0, lon0 = coords
-                filtered = []
-                for row in rows:
-                    row_lat = row.get("location_lat") if isinstance(row, dict) else getattr(row, "location_lat", None)
-                    row_lon = row.get("location_lon") if isinstance(row, dict) else getattr(row, "location_lon", None)
-                    if row_lat is None or row_lon is None:
-                        # Column absent (pre-migration) — include row by default
-                        filtered.append(row)
-                    else:
-                        dist = _haversine_km(lat0, lon0, float(row_lat), float(row_lon))
-                        if dist <= max_distance_km:
-                            filtered.append(row)
-                total = len(filtered)
-                rows = filtered
+        # Haversine post-filter happens at the route layer — see
+        # app.routes.jobs_api.list_jobs. This keeps repo.query() mockable in
+        # tests and lets the route apply refinement on the SQL-bbox-filtered set.
 
         logger.info(
             "jobs_query",
@@ -384,8 +456,6 @@ class JobRepository(BaseRepository):
 # ---------------------------------------------------------------------------
 # Haversine helpers (PostGIS unavailable — pure-Python fallback)
 # ---------------------------------------------------------------------------
-
-import math  # noqa: E402  (kept close to usage for locality)
 
 
 def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
