@@ -13,7 +13,8 @@ REPO_ROOT = Path(__file__).parent.parent
 class Settings(BaseSettings):
     supabase_url: str
     supabase_key: str
-    de_api_key: str
+    # de_api_key removed in Phase 5 — replaced by per-consumer keys in config/api-keys.yaml
+    de_api_key: str = ""
     hunter_api_key: str = ""
 
     model_config = {

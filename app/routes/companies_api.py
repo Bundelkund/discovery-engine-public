@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.dependencies import get_supabase, require_api_key
+from app.dependencies import get_consumer, get_supabase
 from app.models.responses import CompanyDetailResponse, CompanySignals
 from app.repositories.companies import CompanyRepository
 
@@ -8,7 +8,7 @@ companies_api_router = APIRouter(prefix="/companies", tags=["companies-api"])
 
 
 @companies_api_router.get(
-    "/{domain}", dependencies=[Depends(require_api_key)]
+    "/{domain}", dependencies=[Depends(get_consumer)]
 )
 async def get_company(
     domain: str,

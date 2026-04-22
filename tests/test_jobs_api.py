@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.dependencies import get_supabase, require_api_key
+from app.dependencies import get_consumer, get_supabase
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,7 +59,7 @@ def mock_supabase():
 def client(mock_supabase):
     """TestClient with auth and supabase overridden."""
     app.dependency_overrides[get_supabase] = lambda: mock_supabase
-    app.dependency_overrides[require_api_key] = lambda: None
+    app.dependency_overrides[get_consumer] = lambda: None
     yield TestClient(app)
     app.dependency_overrides.clear()
 

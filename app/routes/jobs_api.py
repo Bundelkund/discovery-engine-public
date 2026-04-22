@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import get_supabase, require_api_key
+from app.dependencies import get_consumer, get_supabase
 from app.models.responses import (
     JobDetailResponse,
     JobListItem,
@@ -104,7 +104,7 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
 # ---------------------------------------------------------------------------
 
 
-@jobs_api_router.get("", dependencies=[Depends(require_api_key)])
+@jobs_api_router.get("", dependencies=[Depends(get_consumer)])
 async def list_jobs(
     # --- MUST-filter params (AC-001) ---
     keywords_positive: list[str] = Query(
@@ -189,7 +189,7 @@ async def list_jobs(
     )
 
 
-@jobs_api_router.get("/{job_id}", dependencies=[Depends(require_api_key)])
+@jobs_api_router.get("/{job_id}", dependencies=[Depends(get_consumer)])
 async def get_job(
     job_id: str,
     supabase=Depends(get_supabase),

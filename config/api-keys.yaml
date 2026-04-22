@@ -1,0 +1,11 @@
+consumers:
+  - id: wonderapply
+    name: "WonderApply"
+    key_env: WA_API_KEY
+    scopes: [jobs:read, scrape:trigger]
+    active: true
+  - id: jobhunt
+    name: "JobHunt"
+    key_env: JH_API_KEY
+    scopes: [jobs:read]
+    active: false
