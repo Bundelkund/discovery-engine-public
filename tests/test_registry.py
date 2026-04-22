@@ -6,10 +6,8 @@ import app.sources.greenhouse  # noqa: F401
 import app.sources.adzuna  # noqa: F401
 import app.sources.rss  # noqa: F401
 import app.scoring.keyword  # noqa: F401
-import app.scoring.embedding  # noqa: F401
 import app.enrichment.domain_resolver  # noqa: F401
 import app.enrichment.hunter  # noqa: F401
-import app.enrichment.cvf  # noqa: F401
 
 from app.registry.source_registry import SourceRegistry
 from app.registry.scorer_registry import ScorerRegistry
@@ -24,17 +22,18 @@ def test_source_registry_has_all_sources():
     assert "rss" in ids
 
 
-def test_scorer_registry_has_all_scorers():
+def test_scorer_registry_has_keyword_scorer():
     ids = ScorerRegistry.registered_ids()
     assert "keyword" in ids
-    assert "embedding" in ids
+    assert "embedding" not in ids
+    assert "llm" not in ids
 
 
 def test_enricher_registry_has_all_enrichers():
     ids = EnricherRegistry.registered_ids()
     assert "domain_resolver" in ids
     assert "hunter" in ids
-    assert "cvf" in ids
+    assert "cvf" not in ids
 
 
 def test_source_registry_get_returns_class():

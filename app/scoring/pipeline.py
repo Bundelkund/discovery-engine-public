@@ -1,8 +1,8 @@
 import logging
 
 from app.models.job import NormalizedJob, ScoredJob
-from app.models.profile import UserProfile
 from app.registry.scorer_registry import ScorerRegistry
+from app.scoring.types import ScoringProfile
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class ScoringPipeline:
             self.stages.append(scorer_cls(config=stage_cfg))
 
     async def run_stage1(
-        self, jobs: list[NormalizedJob], profile: UserProfile
+        self, jobs: list[NormalizedJob], profile: ScoringProfile
     ) -> list[ScoredJob]:
         """Run stage 1 scorers on all jobs. Returns ScoredJob list (only stage1)."""
         stage1_scorers = [s for s in self.stages if s.stage == 1]
@@ -46,7 +46,7 @@ class ScoringPipeline:
         return results
 
     async def run_stage2(
-        self, jobs: list[ScoredJob], profile: UserProfile
+        self, jobs: list[ScoredJob], profile: ScoringProfile
     ) -> list[ScoredJob]:
         """Run stage 2 scorers on high-scoring jobs only."""
         stage2_scorers = [s for s in self.stages if s.stage == 2]
@@ -77,7 +77,7 @@ class ScoringPipeline:
         return jobs
 
     async def run_stage3(
-        self, jobs: list[ScoredJob], profile: UserProfile
+        self, jobs: list[ScoredJob], profile: ScoringProfile
     ) -> list[ScoredJob]:
         """Run stage 3 LLM scorers on top-scoring jobs only."""
         stage3_scorers = [s for s in self.stages if s.stage == 3]

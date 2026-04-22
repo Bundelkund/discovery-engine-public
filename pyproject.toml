@@ -15,8 +15,6 @@ dependencies = [
     "httpx",
     "python-jobspy",
     "feedparser",
-    "openai",
-    "numpy",
     "pyyaml",
 ]
 

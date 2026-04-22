@@ -3,9 +3,9 @@ import re
 
 from app.config import load_archetypes_config
 from app.models.job import NormalizedJob, ScorerResult
-from app.models.profile import UserProfile
 from app.registry.scorer_registry import ScorerRegistry
 from app.scoring.base import BaseScorer
+from app.scoring.types import ScoringProfile
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class KeywordScorer(BaseScorer):
         return self._archetypes
 
     async def score(
-        self, job: NormalizedJob, profile: UserProfile
+        self, job: NormalizedJob, profile: ScoringProfile
     ) -> ScorerResult:
         score = 0.0
         details = {}
@@ -98,7 +98,7 @@ class KeywordScorer(BaseScorer):
             details=details,
         )
 
-    def _score_role_match(self, title: str, profile: UserProfile) -> float:
+    def _score_role_match(self, title: str, profile: ScoringProfile) -> float:
         title_lower = title.lower()
         # Check primary roles first
         primary_hits = sum(1 for role in profile.target_roles_primary if role.lower() in title_lower)
@@ -115,7 +115,7 @@ class KeywordScorer(BaseScorer):
         return 0.0
 
     def _score_archetypes(
-        self, text: str, profile: UserProfile
+        self, text: str, profile: ScoringProfile
     ) -> tuple[float, str]:
         if not profile.archetypes:
             return 0.0, ""
@@ -137,7 +137,7 @@ class KeywordScorer(BaseScorer):
         return best_score, best_id
 
     def _score_keywords_positive(
-        self, title: str, description: str, profile: UserProfile
+        self, title: str, description: str, profile: ScoringProfile
     ) -> float:
         if not profile.keywords_positive:
             return 0.0
@@ -151,7 +151,7 @@ class KeywordScorer(BaseScorer):
                 score += 5
         return min(100, score)
 
-    def _score_seniority(self, title: str, profile: UserProfile) -> float:
+    def _score_seniority(self, title: str, profile: ScoringProfile) -> float:
         title_lower = title.lower()
         for term in profile.seniority_boost:
             if term.lower() in title_lower:
@@ -161,7 +161,7 @@ class KeywordScorer(BaseScorer):
                 return -100.0
         return 0.0
 
-    def _score_location(self, text: str, profile: UserProfile) -> float:
+    def _score_location(self, text: str, profile: ScoringProfile) -> float:
         if not profile.target_locations:
             return 0.0
         # Exact city match → 100, remote → 75, EU/DACH → 50
@@ -189,7 +189,7 @@ class KeywordScorer(BaseScorer):
         ]
         return 100.0 if any(t in text for t in remote_terms) else 0.0
 
-    def _score_noise(self, text: str, profile: UserProfile) -> float:
+    def _score_noise(self, text: str, profile: ScoringProfile) -> float:
         all_negative = (profile.keywords_negative or []) + (profile.negative_domains or [])
         if not all_negative:
             return 0.0

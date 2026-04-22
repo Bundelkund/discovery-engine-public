@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class ScrapeResponse(BaseModel):
     source: str
-    profile_id: str
+    profile_id: str = ""
     jobs_found: int = 0
     jobs_new: int = 0
     jobs_duplicate: int = 0
@@ -110,20 +110,3 @@ class CompanyDetailResponse(BaseModel):
     signals: Optional[CompanySignals] = None
 
 
-class ProfileSyncRequest(BaseModel):
-    user_id: str
-    name: str = ""
-    cv_text: str = ""
-    keywords_positive: list[str] = Field(default_factory=list)
-    keywords_negative: list[str] = Field(default_factory=list)
-    target_roles: list[str] = Field(default_factory=list)
-    target_roles_primary: list[str] = Field(default_factory=list)
-    target_roles_secondary: list[str] = Field(default_factory=list)
-    target_locations: list[str] = Field(default_factory=list)
-    negative_domains: list[str] = Field(default_factory=list)
-
-
-class ProfileSyncResponse(BaseModel):
-    profile_id: str
-    status: str = "created"
-    scoring_ready: bool = True

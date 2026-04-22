@@ -12,8 +12,6 @@ class Settings(BaseSettings):
     supabase_key: str
     de_api_key: str
     hunter_api_key: str = ""
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
 
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",

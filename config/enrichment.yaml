@@ -9,8 +9,3 @@ enrichment:
       rate_limit:
         requests_per_second: 2
         daily_limit: 500
-    - enricher_id: "cvf"
-      optional: true
-      requires: ["domain_resolver"]
-      min_postings: 3
-      model: "gpt-4o-mini"

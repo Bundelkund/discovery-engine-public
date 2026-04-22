@@ -11,10 +11,7 @@ from app.enrichment import *  # noqa: F401, F403
 from app.registry.source_registry import SourceRegistry
 from app.routes.health import health_router
 from app.routes.scrape import make_scrape_router
-from app.routes.score import score_router
 from app.routes.enrich import enrich_router
-from app.routes.profiles import profiles_router
-from app.routes.discover import discover_router
 from app.routes.jobs_api import jobs_api_router
 from app.routes.companies_api import companies_api_router
 
@@ -37,9 +34,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Discovery Engine", version="0.1.0", lifespan=lifespan)
 app.include_router(health_router)
-app.include_router(score_router)
 app.include_router(enrich_router)
-app.include_router(profiles_router)
-app.include_router(discover_router)
 app.include_router(jobs_api_router)
 app.include_router(companies_api_router)

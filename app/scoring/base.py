@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 from app.models.job import NormalizedJob, ScorerResult
-from app.models.profile import UserProfile
+from app.scoring.types import ScoringProfile
 
 
 class BaseScorer(ABC):
@@ -10,6 +10,6 @@ class BaseScorer(ABC):
 
     @abstractmethod
     async def score(
-        self, job: NormalizedJob, profile: UserProfile
+        self, job: NormalizedJob, profile: ScoringProfile
     ) -> ScorerResult:
-        """Score a job against a user profile."""
+        """Score a job against a scoring profile."""

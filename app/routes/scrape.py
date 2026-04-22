@@ -8,7 +8,7 @@ from app.services.scrape_orchestrator import ScrapeOrchestrator
 
 
 class ScrapeRequest(BaseModel):
-    profile_id: str
+    profile_id: Optional[str] = None
     location: Optional[str] = None
     limit: Optional[int] = None
     store: bool = True

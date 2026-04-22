@@ -2,24 +2,20 @@ import logging
 import time
 from urllib.parse import urlparse
 
-from fastapi import HTTPException
-
 from app.config import (
     load_enrichment_config,
     load_scoring_config,
     load_sources_config,
 )
-from app.utils.profile_mapper import map_profile_data
 from app.deduplication.dedup import DeduplicationService
 from app.enrichment.pipeline import EnrichmentPipeline
 from app.models.company import CompanyProfile, EnrichmentContext
-from app.models.profile import UserProfile
 from app.models.responses import ScrapeResponse
 from app.registry.source_registry import SourceRegistry
 from app.repositories.companies import CompanyRepository
 from app.repositories.jobs import JobRepository
-from app.repositories.profiles import ProfileRepository
 from app.scoring.pipeline import ScoringPipeline
+from app.scoring.types import ScoringProfile
 
 logger = logging.getLogger(__name__)
 
@@ -28,40 +24,29 @@ class ScrapeOrchestrator:
     def __init__(self, supabase_client):
         self.supabase = supabase_client
         self.job_repo = JobRepository(supabase_client)
-        self.profile_repo = ProfileRepository(supabase_client)
         self.company_repo = CompanyRepository(supabase_client)
         self.dedup = DeduplicationService(supabase_client)
 
     async def run(
         self,
         source_id: str,
-        profile_id: str,
+        profile_id: str | None = None,
         location: str = None,
         limit: int = None,
         store: bool = True,
     ) -> ScrapeResponse:
         start = time.time()
         errors: list[str] = []
-        response = ScrapeResponse(source=source_id, profile_id=profile_id)
+        response = ScrapeResponse(source=source_id, profile_id=profile_id or "")
+
+        # Profile loading is handled by the consumer layer (e.g. WonderApply).
+        # The orchestrator uses an empty ScoringProfile so stage-1 keyword
+        # scoring runs without error; scores will be low until the consumer
+        # injects real profile data via the Phase 3 Query-API.
+        profile = ScoringProfile(id=profile_id or "")
 
         try:
-            # 1. Load profile
-            profile_data = await self.profile_repo.get(profile_id)
-            if not profile_data:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Profile {profile_id} not found",
-                )
-            map_profile_data(profile_data)
-            profile = UserProfile(
-                **{
-                    k: v
-                    for k, v in profile_data.items()
-                    if k in UserProfile.model_fields
-                }
-            )
-
-            # 2. Fetch jobs from source
+            # 1. Fetch jobs from source
             sources_config = load_sources_config().get("sources", {})
             source_config = sources_config.get(source_id, {})
             if limit:
@@ -99,32 +84,10 @@ class ScrapeOrchestrator:
 
             # 6. Store (if enabled)
             if store and kept:
-                stored = await self.job_repo.insert_batch(kept, profile_id)
+                stored = await self.job_repo.insert_batch(kept, profile_id or "")
                 response.jobs_stored = stored
 
-            # 7. Score stage 2 (for high scorers)
-            if kept:
-                await pipeline.run_stage2(kept, profile)
-                for job in kept:
-                    if job.score_stage_2 is not None:
-                        await self.job_repo.update_scores(
-                            job.url, job.score_stage_2
-                        )
-
-            # 7b. Score stage 3 (LLM role analysis for top stage-1 scorers)
-            if kept:
-                await pipeline.run_stage3(kept, profile)
-                for job in kept:
-                    if job.score_stage_3 is not None:
-                        await self.job_repo.update_stage3_score(
-                            job.url,
-                            job.score_stage_3,
-                            job.match_reasoning,
-                            job.match_highlights,
-                            job.match_pitch,
-                        )
-
-            # 8. Enrich new companies
+            # 7. Enrich new companies
             try:
                 domains: set[str] = set()
                 companies_to_enrich: list[CompanyProfile] = []
@@ -162,8 +125,6 @@ class ScrapeOrchestrator:
                 logger.error("Enrichment failed: %s", e)
                 errors.append(f"enrichment: {e}")
 
-        except HTTPException:
-            raise
         except Exception as e:
             logger.error("Scrape orchestrator failed: %s", e)
             errors.append(str(e))
