@@ -54,9 +54,12 @@ def _build_key_index() -> dict[str, dict]:
 
 def get_consumer(x_api_key: str = Header(..., alias="X-API-Key")) -> ConsumerIdentity:
     index = _build_key_index()
+    # hmac.compare_digest requires both args to be ASCII-only if str; encode
+    # to bytes so non-ASCII keys (legitimate or malformed input) don't crash.
+    provided = x_api_key.encode("utf-8")
     matched: dict | None = None
     for env_value, c in index.items():
-        if hmac.compare_digest(env_value, x_api_key):
+        if hmac.compare_digest(env_value.encode("utf-8"), provided):
             matched = c
             break
     if matched is None:
