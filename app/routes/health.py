@@ -1,17 +1,55 @@
-from fastapi import APIRouter
+import logging
 
-from app.registry.source_registry import SourceRegistry
-from app.registry.scorer_registry import ScorerRegistry
+from fastapi import APIRouter, Depends
+
+from app.data_quality.context import get_dq_context
+from app.dependencies import get_supabase
 from app.registry.enricher_registry import EnricherRegistry
+from app.registry.scorer_registry import ScorerRegistry
+from app.registry.source_registry import SourceRegistry
+from app.repositories.jobs import JobRepository
+
+logger = logging.getLogger(__name__)
 
 health_router = APIRouter(tags=["health"])
 
 
 @health_router.get("/health")
-async def health():
+async def health(supabase=Depends(get_supabase)):
+    # DQ state via shared singleton — stays in sync with scrape orchestrator
+    try:
+        dq = get_dq_context()
+        data_quality = {
+            "minhash_enabled": True,
+            "rules_mode": dq.rules_mode,
+            "geonames_loaded": dq.geonames_loaded,
+        }
+    except Exception as exc:
+        logger.error("dq_state_build_failed", extra={"error": str(exc)})
+        data_quality = {
+            "minhash_enabled": False,
+            "rules_mode": "unknown",
+            "geonames_loaded": False,
+        }
+
+    # Coverage metrics via repository (F3)
+    coverage = {
+        "jobs_total": 0,
+        "location_normalized_pct": 0.0,
+        "dq_flags_pct": 0.0,
+        "jobs_last_24h": 0,
+    }
+    if supabase is not None:
+        try:
+            coverage = JobRepository(supabase).get_coverage_metrics()
+        except Exception as exc:
+            logger.warning("coverage_metrics_health_failed", extra={"error": str(exc)})
+
     return {
         "status": "ok",
         "sources": SourceRegistry.registered_ids(),
         "scorers": ScorerRegistry.registered_ids(),
         "enrichers": EnricherRegistry.registered_ids(),
+        "data_quality": data_quality,
+        "coverage": coverage,
     }

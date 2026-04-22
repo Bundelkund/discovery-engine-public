@@ -15,10 +15,9 @@ dependencies = [
     "httpx",
     "python-jobspy",
     "feedparser",
-    "openai",
-    "anthropic",
-    "numpy",
     "pyyaml",
+    "datasketch>=1.6.0",
+    "geopy>=2.4.0",
 ]
 
 [project.optional-dependencies]

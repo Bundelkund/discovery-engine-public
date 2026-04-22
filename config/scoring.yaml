@@ -2,8 +2,10 @@
 # See docs/SCORING.md for full documentation and calibration guide.
 #
 # store_threshold: Jobs below this score are discarded (not saved to DB)
-# gate_threshold:  Only jobs above this score trigger Stage 2 (expensive embedding)
 # weights:         How much each scoring dimension contributes (must sum to ~100)
+#
+# Stages 2 (embedding) and 3 (LLM) were removed in bundle-b-phase1.
+# Consumer-side scoring will be injected via the Phase 3 Query-API.
 
 scoring:
   store_threshold: 40
@@ -20,16 +22,3 @@ scoring:
         seniority: 5
         remote_bonus: 5
         noise_penalty: -10
-
-    - scorer_id: "embedding"
-      stage: 2
-      enabled: true
-      gate_threshold: 50
-      model: "text-embedding-3-small"
-
-    - scorer_id: "llm"
-      stage: 3
-      enabled: true
-      gate_threshold: 60
-      max_jobs: 30
-      model: "claude-haiku-4-5-20251001"

@@ -2,7 +2,6 @@ import pytest
 
 import app.enrichment.domain_resolver  # noqa: F401
 import app.enrichment.hunter  # noqa: F401
-import app.enrichment.cvf  # noqa: F401
 
 from app.enrichment.pipeline import EnrichmentPipeline
 
@@ -33,7 +32,7 @@ def test_pipeline_rejects_missing_deps():
             {
                 "steps": [
                     {
-                        "enricher_id": "cvf",
+                        "enricher_id": "hunter",
                         "optional": True,
                         "requires": ["domain_resolver"],
                     },

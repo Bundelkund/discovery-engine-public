@@ -1,11 +1,10 @@
 import asyncio
 
 import app.scoring.keyword  # noqa: F401
-import app.scoring.embedding  # noqa: F401
 
 from app.scoring.pipeline import ScoringPipeline
 from app.models.job import NormalizedJob, ScoredJob
-from app.models.profile import UserProfile
+from app.scoring.types import ScoringProfile as UserProfile
 
 
 def _make_job(title="Agile Coach", desc="coaching agile teams"):

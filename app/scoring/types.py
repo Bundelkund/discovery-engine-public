@@ -1,14 +1,17 @@
-from typing import Optional
+"""Scoring-internal profile type.
 
+ScoringProfile holds the keyword/archetype signals needed by the scoring
+pipeline.  It is intentionally minimal — consumer-specific profile data
+(CV text, embeddings, DB persistence) lives in the consumer layer.
+"""
 from pydantic import BaseModel, Field
 
 
-class UserProfile(BaseModel):
-    """User profile for scoring."""
+class ScoringProfile(BaseModel):
+    """Scoring-only representation of a candidate profile."""
 
     id: str
     name: str = ""
-    cv_text: Optional[str] = ""
     archetypes: dict[str, float] = Field(default_factory=dict)
     keywords_positive: list[str] = Field(default_factory=list)
     keywords_negative: list[str] = Field(default_factory=list)
@@ -23,4 +26,7 @@ class UserProfile(BaseModel):
     target_roles_secondary: list[str] = Field(default_factory=list)
     target_locations: list[str] = Field(default_factory=list)
     negative_domains: list[str] = Field(default_factory=list)
-    cv_embedding: Optional[list[float]] = None
+
+
+# Keep backward-compat alias so existing imports of UserProfile resolve here
+UserProfile = ScoringProfile

@@ -56,6 +56,13 @@ class ScoredJob(BaseModel):
     match_reasoning: Optional[str] = None
     match_highlights: Optional[list[str]] = None
     match_pitch: Optional[str] = None
+    # Bundle-B additive columns (migration bundle-b-additive.sql):
+    location_normalized: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lon: Optional[float] = None
+    is_remote: bool = False
+    is_hybrid: bool = False
+    dq_flags: dict = Field(default_factory=dict)
 
 
 class ScorerResult(BaseModel):

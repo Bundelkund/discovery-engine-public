@@ -1,0 +1,14 @@
+minhash:
+  threshold: 0.9
+  num_perm: 128
+  shingle_size: 5
+
+rules:
+  flag:
+    - boilerplate_short
+    - no_description
+  reject:
+    - no_title
+    - no_url
+  grace_period_days: 7
+  activation_file: data/dq_rules_activation.txt

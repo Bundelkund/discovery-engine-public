@@ -1,15 +1,17 @@
-import math
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import get_supabase, require_api_key
+from app.dependencies import ConsumerIdentity, get_consumer, get_supabase
 from app.models.responses import (
     JobDetailResponse,
     JobListItem,
-    JobListResponse,
+    JobQueryResponse,
 )
-from app.repositories.jobs import JobRepository
+from app.repositories.jobs import JobRepository, _geocode_city, _haversine_km
+
+logger = logging.getLogger(__name__)
 
 jobs_api_router = APIRouter(prefix="/jobs", tags=["jobs-api"])
 
@@ -26,7 +28,12 @@ def _compute_final_score(row: dict) -> float:
 
 
 def _row_to_list_item(row: dict) -> JobListItem:
-    desc = row.get("description") or ""
+    raw_desc = row.get("description")
+    if raw_desc is None:
+        logger.warning("row_missing_description", extra={"job_id": row.get("id", "")})
+        desc = ""
+    else:
+        desc = raw_desc
     if len(desc) > MAX_DESCRIPTION_LIST:
         desc = desc[:MAX_DESCRIPTION_LIST] + "..."
 
@@ -97,51 +104,147 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
     )
 
 
-@jobs_api_router.get("", dependencies=[Depends(require_api_key)])
+# ---------------------------------------------------------------------------
+# Consumer-Agnostic Query API — Phase 3 (AC-001, AC-015-AC-018)
+# ---------------------------------------------------------------------------
+
+
+@jobs_api_router.get("")
 async def list_jobs(
-    profile_id: str = Query(..., description="Profile ID for scored jobs"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    sort: str = Query("final_score", pattern="^(final_score|scraped_at|company)$"),
-    sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
-    search: Optional[str] = Query(None, min_length=2),
-    source: Optional[str] = None,
-    score_min: Optional[float] = Query(None, ge=0),
-    archetype: Optional[str] = None,
+    consumer: ConsumerIdentity = Depends(get_consumer),
+    *,
+    # --- MUST-filter params (AC-001) ---
+    keywords_positive: list[str] = Query(
+        default=[], description="Keep rows where ANY keyword matches title OR description (ILIKE)"
+    ),
+    keywords_negative: list[str] = Query(
+        default=[], description="Exclude rows where ANY keyword matches title OR description (ILIKE)"
+    ),
+    location: Optional[str] = Query(
+        None, description="ILIKE match on location column (location_normalized post-Phase-4)"
+    ),
+    max_age_days: Optional[int] = Query(
+        None, ge=1, description="Keep jobs scraped within last N days"
+    ),
+    exclude_domain: list[str] = Query(
+        default=[], description="Exclude jobs from these company domains"
+    ),
+    sort: str = Query(
+        "recency",
+        pattern="^(recency|score_keyword)$",
+        description="Sort order: recency (scraped_at DESC) or score_keyword (score_stage_1 DESC, NULL-last)",
+    ),
+    limit: int = Query(50, ge=1, le=100, description="Max rows returned (default 50, max 100)"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    # --- SHOULD-filter params (AC-015-AC-018) ---
+    source: list[str] = Query(default=[], description="Exact-match whitelist on source column"),
+    company_domain: list[str] = Query(
+        default=[], description="Whitelist on company_domain (contrast to exclude_domain)"
+    ),
+    seniority: Optional[str] = Query(
+        None,
+        pattern="^(senior|junior|lead|mid)$",
+        description="Filter by seniority via title ILIKE heuristic",
+    ),
+    min_salary: Optional[int] = Query(None, ge=0, description="Minimum salary_min value"),
+    max_salary: Optional[int] = Query(None, ge=0, description="Maximum salary_max value"),
+    max_distance_km: Optional[int] = Query(
+        None,
+        ge=1,
+        description=(
+            "Haversine distance filter in km. Requires `location` param to be set. "
+            "Uses Python-Haversine post-query filter (PostGIS not installed). "
+            "Pre-Phase-4 migration: silently skipped if location_lat/lon columns absent."
+        ),
+    ),
     supabase=Depends(get_supabase),
-) -> JobListResponse:
+) -> JobQueryResponse:
+    """Consumer-agnostic paginated job query — no profile_id required."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database client not initialised")
+
+    if max_distance_km is not None and not location:
+        raise HTTPException(
+            status_code=400,
+            detail="max_distance_km requires `location` to also be set",
+        )
+
     repo = JobRepository(supabase)
 
-    total = await repo.count_jobs(
-        profile_id=profile_id,
-        search=search,
-        source=source,
-        score_min=score_min,
-        archetype=archetype,
-    )
-
-    rows = await repo.list_jobs(
-        profile_id=profile_id,
-        page=page,
-        page_size=page_size,
+    rows, total = repo.query(
+        keywords_positive=keywords_positive or None,
+        keywords_negative=keywords_negative or None,
+        location=location,
+        max_age_days=max_age_days,
+        exclude_domain=exclude_domain or None,
         sort=sort,
-        sort_dir=sort_dir,
-        search=search,
-        source=source,
-        score_min=score_min,
-        archetype=archetype,
+        limit=limit,
+        offset=offset,
+        source=source or None,
+        company_domain=company_domain or None,
+        seniority=seniority,
+        min_salary=min_salary,
+        max_salary=max_salary,
+        max_distance_km=max_distance_km,
     )
 
-    return JobListResponse(
+    # Haversine post-filter: repo.query() applies SQL bounding-box prefilter;
+    # here we refine to the exact circle. Rows missing location_lat/lon are
+    # kept (legacy pre-migration data graceful fallback).
+    if max_distance_km is not None and location is not None:
+        coords = _geocode_city(location)
+        if coords is None:
+            logger.warning(
+                "max_distance_km_skipped",
+                extra={"reason": "location_not_geocodable", "location": location},
+            )
+        else:
+            lat0, lon0 = coords
+            refined: list[dict] = []
+            for row in rows:
+                row_lat = row.get("location_lat")
+                row_lon = row.get("location_lon")
+                if row_lat is None or row_lon is None:
+                    refined.append(row)
+                    continue
+                if _haversine_km(lat0, lon0, float(row_lat), float(row_lon)) <= max_distance_km:
+                    refined.append(row)
+            total = len(refined)
+            rows = refined
+
+    logger.info(
+        "jobs_query_served",
+        extra={
+            "consumer_id": consumer.id,
+            "result_count": len(rows),
+            "total": total,
+            "filters": {
+                "keywords_positive": keywords_positive or None,
+                "keywords_negative": keywords_negative or None,
+                "location": location,
+                "max_age_days": max_age_days,
+                "source": source or None,
+                "company_domain": company_domain or None,
+                "seniority": seniority,
+                "min_salary": min_salary,
+                "max_salary": max_salary,
+                "max_distance_km": max_distance_km,
+                "sort": sort,
+                "limit": limit,
+                "offset": offset,
+            },
+        },
+    )
+
+    return JobQueryResponse(
         jobs=[_row_to_list_item(r) for r in rows],
         total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=math.ceil(total / page_size) if total > 0 else 0,
+        limit=limit,
+        offset=offset,
     )
 
 
-@jobs_api_router.get("/{job_id}", dependencies=[Depends(require_api_key)])
+@jobs_api_router.get("/{job_id}", dependencies=[Depends(get_consumer)])
 async def get_job(
     job_id: str,
     supabase=Depends(get_supabase),
