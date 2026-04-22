@@ -16,6 +16,8 @@ dependencies = [
     "python-jobspy",
     "feedparser",
     "pyyaml",
+    "datasketch>=1.6.0",
+    "geopy>=2.4.0",
 ]
 
 [project.optional-dependencies]

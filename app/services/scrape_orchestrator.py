@@ -1,12 +1,18 @@
 import logging
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 from app.config import (
+    load_data_quality_config,
     load_enrichment_config,
     load_scoring_config,
     load_sources_config,
 )
+from app.data_quality.location import LocationNormalizer
+from app.data_quality.minhash import MinHashDedup
+from app.data_quality.rules import RulesEngine, compute_activation_date
 from app.deduplication.dedup import DeduplicationService
 from app.enrichment.pipeline import EnrichmentPipeline
 from app.models.company import CompanyProfile, EnrichmentContext
@@ -19,6 +25,8 @@ from app.scoring.types import ScoringProfile
 
 logger = logging.getLogger(__name__)
 
+_GEONAMES_CSV = Path(__file__).parent.parent.parent / "data" / "geonames-de-subset.csv"
+
 
 class ScrapeOrchestrator:
     def __init__(self, supabase_client):
@@ -26,6 +34,34 @@ class ScrapeOrchestrator:
         self.job_repo = JobRepository(supabase_client)
         self.company_repo = CompanyRepository(supabase_client)
         self.dedup = DeduplicationService(supabase_client)
+
+        # Data Quality modules
+        dq_cfg = load_data_quality_config()
+        mh_cfg = dq_cfg.minhash
+        self._minhash = MinHashDedup(
+            threshold=mh_cfg.threshold,
+            num_perm=mh_cfg.num_perm,
+            shingle_size=mh_cfg.shingle_size,
+        )
+        self._location_normalizer = LocationNormalizer(_GEONAMES_CSV)
+
+        try:
+            activation = compute_activation_date(
+                dq_cfg.rules.model_dump(),
+                datetime.now(tz=timezone.utc).date(),
+                dq_cfg.activation_file_path,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Activation file corrupt — rules run in flag-only mode",
+                extra={"error": str(exc)},
+            )
+            activation = None
+
+        self._rules_engine = RulesEngine(
+            dq_cfg.rules.model_dump(),
+            activation_date=activation,
+        )
 
     async def run(
         self,
@@ -66,10 +102,71 @@ class ScrapeOrchestrator:
             # 3. Normalize
             normalized = [scraper.normalize(raw) for raw in raw_jobs]
 
-            # 4. Dedup
+            # 4. Dedup (hash-based)
             new_jobs, dup_count = await self.dedup.filter_batch(normalized)
             response.jobs_duplicate = dup_count
             response.jobs_new = len(new_jobs)
+
+            if not new_jobs:
+                response.duration_ms = int((time.time() - start) * 1000)
+                return response
+
+            # 4b. MinHash near-duplicate filter
+            minhash_filtered: list = []
+            for job in new_jobs:
+                desc = getattr(job, "description", "") or ""
+                if self._minhash.is_near_duplicate(desc, []):
+                    logger.info(
+                        "MinHash near-duplicate skipped",
+                        extra={"url": getattr(job, "url", "")[:80]},
+                    )
+                    response.jobs_duplicate = (response.jobs_duplicate or 0) + 1
+                else:
+                    job_id = getattr(job, "external_id", "") or getattr(job, "url", "")
+                    self._minhash.add(desc, job_id)
+                    minhash_filtered.append(job)
+            new_jobs = minhash_filtered
+
+            if not new_jobs:
+                response.duration_ms = int((time.time() - start) * 1000)
+                return response
+
+            # 4c. Location normalization + Rules engine
+            dq_rejected: list = []
+            dq_kept: list = []
+            reject_active = self._rules_engine.mode == "flag+reject"
+
+            for job in new_jobs:
+                job_dict = job.model_dump() if hasattr(job, "model_dump") else dict(job)
+
+                # Location normalization
+                raw_location = job_dict.get("location", "") or ""
+                loc_result = self._location_normalizer.normalize(raw_location)
+                job_dict.update(loc_result)
+
+                # Rules classification
+                verdict, flags = self._rules_engine.classify(job_dict)
+                job_dict["dq_flags"] = flags
+
+                if verdict == "reject" and reject_active:
+                    logger.info(
+                        "Job rejected by DQ rules",
+                        extra={"flags": flags, "url": job_dict.get("url", "")[:80]},
+                    )
+                    dq_rejected.append(job)
+                else:
+                    # Rebuild job with enriched fields where model supports it
+                    try:
+                        enriched = job.model_copy(update=job_dict)
+                    except Exception:
+                        enriched = job
+                    dq_kept.append(enriched)
+
+            new_jobs = dq_kept
+            logger.info(
+                "DQ filter complete",
+                extra={"kept": len(dq_kept), "rejected": len(dq_rejected)},
+            )
 
             if not new_jobs:
                 response.duration_ms = int((time.time() - start) * 1000)
