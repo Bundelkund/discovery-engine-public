@@ -1,18 +1,13 @@
 import logging
 import time
-from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import urlparse
 
 from app.config import (
-    load_data_quality_config,
     load_enrichment_config,
     load_scoring_config,
     load_sources_config,
 )
-from app.data_quality.location import LocationNormalizer
-from app.data_quality.minhash import MinHashDedup
-from app.data_quality.rules import RulesEngine, compute_activation_date
+from app.data_quality.context import get_dq_context
 from app.deduplication.dedup import DeduplicationService
 from app.enrichment.pipeline import EnrichmentPipeline
 from app.models.company import CompanyProfile, EnrichmentContext
@@ -25,8 +20,6 @@ from app.scoring.types import ScoringProfile
 
 logger = logging.getLogger(__name__)
 
-_GEONAMES_CSV = Path(__file__).parent.parent.parent / "data" / "geonames-de-subset.csv"
-
 
 class ScrapeOrchestrator:
     def __init__(self, supabase_client):
@@ -35,33 +28,11 @@ class ScrapeOrchestrator:
         self.company_repo = CompanyRepository(supabase_client)
         self.dedup = DeduplicationService(supabase_client)
 
-        # Data Quality modules
-        dq_cfg = load_data_quality_config()
-        mh_cfg = dq_cfg.minhash
-        self._minhash = MinHashDedup(
-            threshold=mh_cfg.threshold,
-            num_perm=mh_cfg.num_perm,
-            shingle_size=mh_cfg.shingle_size,
-        )
-        self._location_normalizer = LocationNormalizer(_GEONAMES_CSV)
-
-        try:
-            activation = compute_activation_date(
-                dq_cfg.rules.model_dump(),
-                datetime.now(tz=timezone.utc).date(),
-                dq_cfg.activation_file_path,
-            )
-        except ValueError as exc:
-            logger.warning(
-                "Activation file corrupt — rules run in flag-only mode",
-                extra={"error": str(exc)},
-            )
-            activation = None
-
-        self._rules_engine = RulesEngine(
-            dq_cfg.rules.model_dump(),
-            activation_date=activation,
-        )
+        # Shared DQ context (singleton) — keeps /health and orchestrator in sync
+        dq = get_dq_context()
+        self._minhash = dq.minhash
+        self._location_normalizer = dq.location_normalizer
+        self._rules_engine = dq.rules_engine
 
     async def run(
         self,
@@ -154,6 +125,10 @@ class ScrapeOrchestrator:
                         extra={"flags": flags, "url": job_dict.get("url", "")[:80]},
                     )
                     dq_rejected.append(job)
+                    # F6: remove from LSH to prevent memory leak + false-positive drift
+                    lsh_id = getattr(job, "external_id", "") or getattr(job, "url", "")
+                    if lsh_id:
+                        self._minhash.remove(lsh_id)
                 else:
                     # Rebuild job with enriched fields where model supports it
                     try:

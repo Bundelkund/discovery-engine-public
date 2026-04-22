@@ -3,13 +3,13 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import get_consumer, get_supabase
+from app.dependencies import ConsumerIdentity, get_consumer, get_supabase
 from app.models.responses import (
     JobDetailResponse,
     JobListItem,
     JobQueryResponse,
 )
-from app.repositories.jobs import JobRepository
+from app.repositories.jobs import JobRepository, _geocode_city, _haversine_km
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,12 @@ def _compute_final_score(row: dict) -> float:
 
 
 def _row_to_list_item(row: dict) -> JobListItem:
-    desc = row.get("description") or ""
+    raw_desc = row.get("description")
+    if raw_desc is None:
+        logger.warning("row_missing_description", extra={"job_id": row.get("id", "")})
+        desc = ""
+    else:
+        desc = raw_desc
     if len(desc) > MAX_DESCRIPTION_LIST:
         desc = desc[:MAX_DESCRIPTION_LIST] + "..."
 
@@ -104,8 +109,10 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
 # ---------------------------------------------------------------------------
 
 
-@jobs_api_router.get("", dependencies=[Depends(get_consumer)])
+@jobs_api_router.get("")
 async def list_jobs(
+    consumer: ConsumerIdentity = Depends(get_consumer),
+    *,
     # --- MUST-filter params (AC-001) ---
     keywords_positive: list[str] = Query(
         default=[], description="Keep rows where ANY keyword matches title OR description (ILIKE)"
@@ -179,6 +186,54 @@ async def list_jobs(
         min_salary=min_salary,
         max_salary=max_salary,
         max_distance_km=max_distance_km,
+    )
+
+    # Haversine post-filter: repo.query() applies SQL bounding-box prefilter;
+    # here we refine to the exact circle. Rows missing location_lat/lon are
+    # kept (legacy pre-migration data graceful fallback).
+    if max_distance_km is not None and location is not None:
+        coords = _geocode_city(location)
+        if coords is None:
+            logger.warning(
+                "max_distance_km_skipped",
+                extra={"reason": "location_not_geocodable", "location": location},
+            )
+        else:
+            lat0, lon0 = coords
+            refined: list[dict] = []
+            for row in rows:
+                row_lat = row.get("location_lat")
+                row_lon = row.get("location_lon")
+                if row_lat is None or row_lon is None:
+                    refined.append(row)
+                    continue
+                if _haversine_km(lat0, lon0, float(row_lat), float(row_lon)) <= max_distance_km:
+                    refined.append(row)
+            total = len(refined)
+            rows = refined
+
+    logger.info(
+        "jobs_query_served",
+        extra={
+            "consumer_id": consumer.id,
+            "result_count": len(rows),
+            "total": total,
+            "filters": {
+                "keywords_positive": keywords_positive or None,
+                "keywords_negative": keywords_negative or None,
+                "location": location,
+                "max_age_days": max_age_days,
+                "source": source or None,
+                "company_domain": company_domain or None,
+                "seniority": seniority,
+                "min_salary": min_salary,
+                "max_salary": max_salary,
+                "max_distance_km": max_distance_km,
+                "sort": sort,
+                "limit": limit,
+                "offset": offset,
+            },
+        },
     )
 
     return JobQueryResponse(
