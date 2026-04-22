@@ -148,3 +148,102 @@ def test_old_shared_de_api_key_returns_401(client):
     """DE_API_KEY is not in api-keys.yaml; using it as a key → 401."""
     resp = client.get("/jobs", headers={"X-API-Key": "old-shared-de-key"})
     assert resp.status_code == 401, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Test: cross-consumer isolation — distinct keys log distinct consumer_ids
+# ---------------------------------------------------------------------------
+
+
+def test_consumers_log_distinct_ids(caplog):
+    """Two sequential requests with different keys log their own consumer_id.
+
+    Regression guard against consumer_id leakage (AC-011 isolation).
+    """
+    import logging
+    from app.dependencies import get_supabase, _load_consumers as _lc
+
+    active_both = [
+        {
+            "id": "wonderapply",
+            "name": "WA",
+            "key_env": "WA_API_KEY",
+            "scopes": ["jobs:read"],
+            "active": True,
+        },
+        {
+            "id": "jobhunt",
+            "name": "JH",
+            "key_env": "JH_API_KEY",
+            "scopes": ["jobs:read"],
+            "active": True,
+        },
+    ]
+    _lc.cache_clear()
+
+    with patch("app.dependencies._load_consumers", return_value=active_both):
+        mock_sb = MagicMock()
+        app.dependency_overrides[get_supabase] = lambda: mock_sb
+        c = TestClient(app, raise_server_exceptions=False)
+        try:
+            with patch(
+                "app.routes.jobs_api.JobRepository.query",
+                return_value=([], 0),
+            ):
+                with caplog.at_level(logging.INFO, logger="app.dependencies"):
+                    caplog.clear()
+                    c.get("/jobs", headers={"X-API-Key": "test-wa-dev"})
+                    c.get("/jobs", headers={"X-API-Key": "test-jh-dev"})
+        finally:
+            app.dependency_overrides.clear()
+
+    ids = [
+        getattr(r, "consumer_id", None)
+        for r in caplog.records
+        if "request_authenticated" in r.message
+    ]
+    assert ids == ["wonderapply", "jobhunt"], (
+        f"Expected distinct consumer_ids in order, got {ids}"
+    )
+
+
+def test_wa_key_does_not_identify_as_jh(caplog):
+    """WA key logs consumer_id=wonderapply, never jobhunt (even when both are configured)."""
+    import logging
+    from app.dependencies import get_supabase, _load_consumers as _lc
+
+    both = [
+        {
+            "id": "wonderapply",
+            "name": "WA",
+            "key_env": "WA_API_KEY",
+            "scopes": ["jobs:read"],
+            "active": True,
+        },
+        {
+            "id": "jobhunt",
+            "name": "JH",
+            "key_env": "JH_API_KEY",
+            "scopes": ["jobs:read"],
+            "active": True,
+        },
+    ]
+    _lc.cache_clear()
+    with patch("app.dependencies._load_consumers", return_value=both):
+        mock_sb = MagicMock()
+        app.dependency_overrides[get_supabase] = lambda: mock_sb
+        c = TestClient(app, raise_server_exceptions=False)
+        try:
+            with patch(
+                "app.routes.jobs_api.JobRepository.query",
+                return_value=([], 0),
+            ):
+                with caplog.at_level(logging.INFO, logger="app.dependencies"):
+                    caplog.clear()
+                    c.get("/jobs", headers={"X-API-Key": "test-wa-dev"})
+        finally:
+            app.dependency_overrides.clear()
+
+    auth_records = [r for r in caplog.records if "request_authenticated" in r.message]
+    assert len(auth_records) == 1
+    assert getattr(auth_records[0], "consumer_id", None) == "wonderapply"

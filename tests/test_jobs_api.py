@@ -58,8 +58,12 @@ def mock_supabase():
 @pytest.fixture
 def client(mock_supabase):
     """TestClient with auth and supabase overridden."""
+    from app.dependencies import ConsumerIdentity
+
     app.dependency_overrides[get_supabase] = lambda: mock_supabase
-    app.dependency_overrides[get_consumer] = lambda: None
+    app.dependency_overrides[get_consumer] = lambda: ConsumerIdentity(
+        id="test-consumer", name="Test", scopes=["jobs:read"]
+    )
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -245,10 +249,6 @@ def test_sort_invalid_returns_422(client):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="location_lat/location_lon columns absent pre-Phase-4 migration; "
-    "Haversine filter silently passes all rows when columns missing"
-)
 def test_max_distance_km_with_known_city(client):
     """max_distance_km with a known city geocodes and filters."""
     berlin_row = _make_job_row(location_lat=52.52, location_lon=13.40)
