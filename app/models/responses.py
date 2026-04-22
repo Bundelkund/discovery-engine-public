@@ -60,6 +60,15 @@ class JobListResponse(BaseModel):
     total_pages: int = 0
 
 
+class JobQueryResponse(BaseModel):
+    """Consumer-agnostic paginated response — no profile_id required."""
+
+    jobs: list[JobListItem] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
 class JobDetailResponse(BaseModel):
     id: str
     title: str
