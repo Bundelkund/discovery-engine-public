@@ -31,9 +31,20 @@ cp .env.example .env
 uvicorn app.main:app --port 8091
 ```
 
+## Authentication (Phase 5+)
+
+The legacy shared `DE_API_KEY` is replaced by per-consumer keys defined in `config/api-keys.yaml`:
+
+| Consumer | Env var | Scopes | Active |
+|---|---|---|---|
+| WonderApply | `WA_API_KEY` | `jobs:read`, `scrape:trigger` | yes |
+| JobHunt | `JH_API_KEY` | `jobs:read` | no |
+
+Send `X-Api-Key: <consumer-key>` in every request. n8n workflows that call `/scrape/{source}` use `WA_API_KEY` (it has the `scrape:trigger` scope).
+
 ## API Endpoints
 
-All endpoints (except /health) require `X-Api-Key` header matching `DE_API_KEY`.
+All endpoints (except /health) require `X-Api-Key` header matching one of the consumer keys above.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -63,8 +74,6 @@ WonderApply ──GET /jobs──→ Discovery Engine ──SELECT──→ Supa
 WonderApply ──GET /companies/{domain}──→ Discovery Engine
 WonderApply ──POST /profiles/sync──→ Discovery Engine (on profile update)
 ```
-
-See `florian-knowledge/dev/projects/discovery-engine/.specs/wa-provider-api/` for the full spec.
 
 ## Configuration
 

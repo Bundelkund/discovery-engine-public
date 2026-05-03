@@ -1,8 +1,6 @@
 -- Bundle B: Additive Schema Migration
--- Project: discovery-engine (REDACTED)
 -- Date: 2026-04-22
 -- SAFETY: additive-only — no DROP, RENAME, or ALTER TYPE statements.
--- Protected: jobs table (shared with JobHunt — additive-only per AD-8).
 
 -- ---------------------------------------------------------------------------
 -- New columns

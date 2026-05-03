@@ -11,4 +11,6 @@ build/
 .specs/
 .refs/
 .deepeval/
+.worktrees/
+.plan/
 excalidraw.log

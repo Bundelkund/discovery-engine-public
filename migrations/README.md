@@ -27,7 +27,7 @@ the methods below.
 ### Option A: Supabase Dashboard (recommended)
 
 1. Log in to [app.supabase.com](https://app.supabase.com)
-2. Select project **REDACTED**
+2. Select your Supabase project
 3. Navigate to **SQL Editor** → **New query**
 4. Paste the contents of `bundle-b-additive.sql` and click **Run**
 5. Verify success: `SELECT column_name FROM information_schema.columns WHERE table_name = 'jobs' ORDER BY ordinal_position;`
@@ -44,7 +44,7 @@ psql "$SUPABASE_DB_URL" -f migrations/bundle-b-additive.sql
 
 ```bash
 # Get connection details from Supabase Dashboard → Settings → Database
-psql "postgresql://postgres:[YOUR-PASSWORD]@db.REDACTED.supabase.co:5432/postgres" \
+psql "postgresql://postgres:[YOUR-PASSWORD]@db.[YOUR-PROJECT-REF].supabase.co:5432/postgres" \
   -f migrations/bundle-b-additive.sql
 ```
 

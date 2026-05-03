@@ -1,25 +1,22 @@
 # Discovery Engine — Data Sources Registry
 #
-# Documents ALL sources that feed into the shared `jobs` table.
-# Both Discovery Engine Python scrapers AND external n8n workflows.
+# Documents the Python scrapers that feed into the `jobs` table.
 # This file is documentation — it is not read by the application.
 
-# === Discovery Engine Python Scrapers ===
+# === Python Scrapers ===
 # Triggered via POST /scrape/{source_id}. Code in app/sources/.
 
 python_scrapers:
   greenhouse:
-    status: active
     module: app.sources.greenhouse
     api: boards-api.greenhouse.io (JSON)
     portals: 27
-    notes: "Structured API, reliable. Covers Anthropic, Vercel, Celonis, Helsing, etc."
+    notes: "ATS scraper. Triggered via POST /scrape/greenhouse."
 
   indeed:
-    status: active
     module: app.sources.indeed
     api: python-jobspy (scraping lib)
-    notes: "Fragile — Indeed blocks aggressively. May need proxy. Deprecates JobHunt JobSpy."
+    notes: "Indeed/Glassdoor/Google scraping via python-jobspy."
 
   adzuna:
     status: disabled
@@ -28,87 +25,23 @@ python_scrapers:
     notes: "Needs app_id + app_key from developer.adzuna.com. Broad coverage DE."
 
   rss:
-    status: active
     module: app.sources.rss
     api: feedparser
-    notes: "arbeit.swiss feed currently empty. Add more feeds in sources.yaml."
+    notes: "Feed URLs configured in sources.yaml."
 
   ashby:
-    status: planned
     module: app.sources.ashby
     api: jobs.ashbyhq.com/{company} (JSON)
     portals: 25
-    notes: "Cohere, LangChain, DeepL, n8n, ElevenLabs, Lovable, etc."
+    notes: "ATS scraper for Ashby-hosted boards (Cohere, LangChain, DeepL, n8n, ElevenLabs, Lovable, etc.)."
 
   lever:
-    status: planned
     module: app.sources.lever
     api: api.lever.co/v0/postings/{company} (JSON)
     portals: 8
-    notes: "Mistral AI, Spotify, Palantir, Qonto, etc."
+    notes: "ATS scraper for Lever-hosted boards (Mistral AI, Spotify, Palantir, Qonto, etc.)."
 
-# === n8n Workflows (write directly to Supabase jobs table) ===
-# These are NOT triggered via Discovery Engine API.
-# They run independently on Cron and write to the same jobs table.
-# Discovery Engine can score their output via POST /score/batch.
-
-n8n_workflows:
-  unified_scraping:
-    workflow_id: "29FDBWBaagsMCoJC"
-    name: "JobHunt - Unified Scraping Pipeline"
-    status: active
-    cron: "daily 09:00"
-    method: "JobSpy (Indeed/Glassdoor) + Metajob + Kimeta"
-    output: "Telegram notification"
-    notes: "Main scraping pipeline. JobSpy to be deprecated when DE Indeed scraper stable."
-
-  prio1_niche_portals:
-    workflow_id: "7zdQJLUiLvSHzPLP"
-    name: "JobHunt - Prio-1 Niche Portals Scraper"
-    status: active
-    cron: "daily 12:00"
-    method: "Firecrawl (HTML → Markdown → Extract)"
-    notes: "Scrapes career sites directly. Handles non-API portals."
-
-  apify_linkedin:
-    workflow_id: "GAjrKbbM0cdJFlhX"
-    name: "JobHunt - Apify LinkedIn Scraper"
-    status: active
-    cron: "weekly Monday 10:00"
-    method: "Apify Actor (LinkedIn Job Search)"
-    notes: "LinkedIn ToS risk. ADR-006 plans email pipeline replacement."
-
-  firecrawl_career_sites:
-    workflow_id: "JMDrZyqAGR1IkidS"
-    name: "JobHunt - Firecrawl Career Sites Scraper"
-    status: inactive
-    cron: "Wed + Sat 11:00"
-    method: "Firecrawl (direct career pages)"
-    notes: "Disabled. Overlap with Prio-1 Niche Portals."
-
-  berlinstartupjobs_rss:
-    workflow_id: "9zaIAPAwGuaZ49kJ"
-    name: "JobHunt - BerlinStartupJobs RSS"
-    status: active
-
-  bundesagentur_api:
-    workflow_id: "chOiOCm9Pqb3ulVF"
-    name: "JobHunt - Bundesagentur API Scraper"
-    status: inactive
-    notes: "German federal job agency API."
-
-  ki_jobs_berlin:
-    workflow_id: "Eyqol6Hc6MSelw7i"
-    name: "Career - KI Jobs Berlin Scraper"
-    status: active
-
-  jobspy_scheduler:
-    workflow_id: "GCCHVw0lrdHJR1oz"
-    name: "JobHunt - JobSpy Scheduler"
-    status: active
-    notes: "Triggers JobSpy worker. Will be deprecated by DE Indeed scraper."
-
-# === Planned Integration ===
-# n8n Post-Scrape workflow calls Discovery Engine:
-#   1. POST /score/batch (for each active profile)
-#   2. POST /enrich/{domain} (for new companies, max 25/day Hunter.io)
+  personio:
+    module: app.sources.personio
+    api: Personio ATS API
+    notes: "ATS scraper for Personio-hosted boards."
