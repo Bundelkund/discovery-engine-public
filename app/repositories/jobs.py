@@ -94,8 +94,12 @@ class JobRepository(BaseRepository):
                     "score_stage_2": job.score_stage_2,
                     "archetype": job.archetype,
                     "company_domain": job.company_domain,
-                    "profile_id": profile_id,
-                    "scraped_at": job.posted_at.isoformat() if job.posted_at else None,
+                    "profile_id": profile_id if profile_id else None,
+                    "scraped_at": (
+                        job.posted_at.isoformat()
+                        if job.posted_at
+                        else datetime.now(timezone.utc).isoformat()
+                    ),
                     # Bundle-B additive columns
                     "location_normalized": job.location_normalized,
                     "location_lat": job.location_lat,
