@@ -1,6 +1,6 @@
 # Discovery Engine
 
-> **Single-tenant** job discovery service — scrapes, scores, and aggregates job postings from multiple ATS sources for **one** applicant. Designed to feed the [Apply Skill](https://github.com/Bundlekund/apply-skill) (a Claude-Code workflow for personalized job applications).
+> **Single-tenant** job discovery service — scrapes, scores, and aggregates job postings from multiple ATS sources for **one** applicant. Designed to feed the [Apply Skill](https://github.com/Bundelkund/apply-skill) (a Claude-Code workflow for personalized job applications).
 
 This is an **open-source intake layer**. It is **not** a multi-tenant SaaS — see [ROADMAP.md](ROADMAP.md) if you need multi-user support.
 
@@ -45,7 +45,7 @@ Discovery Engine ships with a **demo configuration** so it boots out-of-the-box.
 
 The recommended way to generate these from an interactive flow ("which roles do you want, which companies to track?") is the **Apply Skill** — a Claude-Code skill that walks you through onboarding and writes the local overrides for you. See:
 
-→ **[github.com/Bundlekund/apply-skill](https://github.com/Bundlekund/apply-skill)** *(separate repo, also open-source)*
+→ **[github.com/Bundelkund/apply-skill](https://github.com/Bundelkund/apply-skill)** *(separate repo, also open-source)*
 
 You can absolutely run Discovery Engine without the Apply Skill — just edit `config/portals.local.yaml` by hand.
 

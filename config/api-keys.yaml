@@ -1,6 +1,6 @@
 consumers:
   # Primary consumer for the open-source single-tenant deployment:
-  # the Apply Skill (Claude Code workflow at github.com/Bundlekund/apply-skill).
+  # the Apply Skill (Claude Code workflow at github.com/Bundelkund/apply-skill).
   - id: apply-skill
     name: "Apply Skill"
     key_env: APPLY_API_KEY

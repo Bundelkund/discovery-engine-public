@@ -5,7 +5,7 @@
 # instead of using an empty default profile. The .local.yaml form is
 # gitignored (see .gitignore).
 #
-# The Apply Skill (github.com/Bundlekund/apply-skill) generates this file
+# The Apply Skill (github.com/Bundelkund/apply-skill) generates this file
 # automatically from an interactive onboarding flow.
 #
 # Schema mirrors app/scoring/types.py::ScoringProfile.

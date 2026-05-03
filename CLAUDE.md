@@ -1,6 +1,6 @@
 # Discovery Engine
 
-> **Single-tenant** job discovery service — scrapes, scores, and enriches job postings from multiple sources for **one** applicant. Primary consumer: the [Apply Skill](https://github.com/Bundlekund/apply-skill) (separate repo, Claude-Code workflow).
+> **Single-tenant** job discovery service — scrapes, scores, and enriches job postings from multiple sources for **one** applicant. Primary consumer: the [Apply Skill](https://github.com/Bundelkund/apply-skill) (separate repo, Claude-Code workflow).
 >
 > Multi-tenant deployment ("WonderApply"-style SaaS) requires Architecture Variant C — see [ROADMAP.md](ROADMAP.md). Out of scope for this repo.
 
@@ -54,4 +54,4 @@ pytest -x
 
 ## Companion project
 
-[**Apply Skill**](https://github.com/Bundlekund/apply-skill) is the canonical consumer. It runs interactive onboarding (which archetypes? which company portals?) and writes the resulting `config/portals.local.yaml` + `config/scoring-profile.local.yaml` into a Discovery Engine instance, then queries `/jobs` for personalized matches and drives the application-writing workflow downstream.
+[**Apply Skill**](https://github.com/Bundelkund/apply-skill) is the canonical consumer. It runs interactive onboarding (which archetypes? which company portals?) and writes the resulting `config/portals.local.yaml` + `config/scoring-profile.local.yaml` into a Discovery Engine instance, then queries `/jobs` for personalized matches and drives the application-writing workflow downstream.
