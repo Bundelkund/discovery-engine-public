@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import yaml
 
+from app.config import resolve_local_override
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
 from app.sources.base import BaseScraper
@@ -20,11 +21,7 @@ class AshbyScraper(BaseScraper):
     async def fetch(self, config: dict) -> list[RawJob]:
         try:
             portals_file = config.get("portals_file", "config/portals.yaml")
-            portals_path = (
-                Path(portals_file)
-                if Path(portals_file).is_absolute()
-                else CONFIG_DIR.parent / portals_file
-            )
+            portals_path = resolve_local_override(portals_file)
             slugs = self._load_slugs(portals_path)
 
             all_jobs = []

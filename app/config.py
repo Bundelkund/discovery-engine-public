@@ -33,6 +33,20 @@ def load_yaml(name: str) -> dict:
         return yaml.safe_load(f)
 
 
+def resolve_local_override(path: str | Path) -> Path:
+    """Resolve a config path with .local.yaml override.
+
+    If `<stem>.local.yaml` exists alongside `<path>`, prefer it.
+    Otherwise return the original path. Lets users keep a private
+    portals.local.yaml gitignored without touching sources.yaml.
+    """
+    p = Path(path)
+    if not p.is_absolute():
+        p = REPO_ROOT / p
+    local = p.with_name(p.stem + ".local.yaml")
+    return local if local.exists() else p
+
+
 def load_sources_config() -> dict:
     return load_yaml("sources.yaml")
 
