@@ -1,88 +1,95 @@
 # Discovery Engine
 
-Job discovery service — scrapes, scores, and enriches job postings from multiple sources. Designed as the intake layer for WonderApply.
+> **Single-tenant** job discovery service — scrapes, scores, and aggregates job postings from multiple ATS sources for **one** applicant. Designed to feed the [Apply Skill](https://github.com/Bundlekund/apply-skill) (a Claude-Code workflow for personalized job applications).
 
-## Architecture
+This is an **open-source intake layer**. It is **not** a multi-tenant SaaS — see [ROADMAP.md](ROADMAP.md) if you need multi-user support.
+
+## What it does
 
 ```
-n8n (cron) → /scrape/{source} → Dedup → Score Stage 1 → Store → Score Stage 2 → Enrich
+n8n (cron) ──▶ POST /scrape/{source} ──▶ Dedup ──▶ Stage-1 Score ──▶ Supabase
+                                                                          │
+                                       Apply Skill / your tooling ◀───────┘
+                                       GET /jobs?keywords_positive=…
+                                       GET /companies/{domain}
 ```
 
-- **Sources**: Greenhouse, Ashby, Lever, Personio (ATS APIs), Adzuna, RSS, Google Jobs (Tavily), BA Jobboerse
-- **Scoring**: Stage 1 = keyword/archetype (instant), Stage 2 = embedding (OpenAI), Stage 3 = LLM role analysis (Claude Haiku)
-- **Enrichment**: Domain resolution, Hunter.io company data, CVF (Culture-Values Fit via LLM), Kununu, Tavily Signals
-- **Storage**: Supabase (shared DB with WonderApply + JobHunt)
-- **Consumers**: WonderApply (via REST API), Apply Skill (CLI)
-
-Key patterns: Registry with self-registration decorators, config-driven pipelines (YAML), repository pattern for DB access.
+- **Sources** (`app/sources/`): Greenhouse, Ashby, Lever, Personio (ATS APIs), Adzuna, RSS, Indeed (jobspy)
+- **Scoring** (`app/scoring/`): one stage — keyword + archetype matching against a *single* configured profile (Stage 2 LLM/embedding scoring was removed; see ROADMAP.md if reintroducing)
+- **Enrichment** (`app/enrichment/`): domain resolution, Hunter.io company data
+- **Storage**: Supabase (REST only — no direct DB access required by consumers)
+- **Consumer pattern**: REST. Consumers identify themselves via `X-API-Key` (per-consumer key in `config/api-keys.yaml`).
 
 ## Setup
 
 ```bash
-# Install
 pip install -e .
-
-# Configure
 cp .env.example .env
-# Fill in: SUPABASE_URL, SUPABASE_KEY, DE_API_KEY (self-chosen)
-# Optional: HUNTER_API_KEY, OPENAI_API_KEY (for Stage 2 scoring)
+#  fill in: SUPABASE_URL, SUPABASE_KEY, APPLY_API_KEY (any string you choose)
+#  optional: HUNTER_API_KEY, OPENAI_API_KEY (currently unused — reserved for Stage-2)
 
-# Run
 uvicorn app.main:app --port 8091
+curl http://localhost:8091/health
 ```
 
-## Authentication (Phase 5+)
+For the full schema, install [Supabase CLI](https://supabase.com/docs/guides/cli) and run the migration in `migrations/bundle-b-additive.sql`. See `migrations/README.md` for hosted-Supabase instructions.
 
-The legacy shared `DE_API_KEY` is replaced by per-consumer keys defined in `config/api-keys.yaml`:
+## Personalize it (single-user setup)
 
-| Consumer | Env var | Scopes | Active |
-|---|---|---|---|
-| WonderApply | `WA_API_KEY` | `jobs:read`, `scrape:trigger` | yes |
-| JobHunt | `JH_API_KEY` | `jobs:read` | no |
+Discovery Engine ships with a **demo configuration** so it boots out-of-the-box. To make it useful for *your* job search, override two YAMLs locally — they are gitignored:
 
-Send `X-Api-Key: <consumer-key>` in every request. n8n workflows that call `/scrape/{source}` use `WA_API_KEY` (it has the `scrape:trigger` scope).
+| Demo file (committed) | Your private override (gitignored) | What it controls |
+|---|---|---|
+| `config/portals.yaml` | `config/portals.local.yaml` | Which company ATS boards to scrape |
+| `config/archetypes.yaml` | `config/archetypes.local.yaml` *(optional)* | Catalog of role archetypes + keywords |
 
-## API Endpoints
+The recommended way to generate these from an interactive flow ("which roles do you want, which companies to track?") is the **Apply Skill** — a Claude-Code skill that walks you through onboarding and writes the local overrides for you. See:
 
-All endpoints (except /health) require `X-Api-Key` header matching one of the consumer keys above.
+→ **[github.com/Bundlekund/apply-skill](https://github.com/Bundlekund/apply-skill)** *(separate repo, also open-source)*
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Service health + registered components |
-| POST | `/scrape/{source}` | Scrape jobs from source (greenhouse/ashby/lever/personio/rss) |
-| POST | `/score/batch` | Score unscored jobs for a profile |
-| POST | `/enrich/{domain}` | Enrich a company by domain |
-| POST | `/discover/opportunities` | Proactive company recommendations |
-| **GET** | **`/jobs`** | **Paginated job list with scores (for WonderApply)** |
-| **GET** | **`/jobs/{id}`** | **Job detail with all score fields** |
-| **GET** | **`/companies/{domain}`** | **Company profile with Hunter + CVF + signals** |
-| POST | `/profiles` | Create a scoring profile |
-| GET | `/profiles` | List all profiles |
-| GET | `/profiles/{id}` | Get profile details |
-| PUT | `/profiles/{id}` | Update profile |
-| DELETE | `/profiles/{id}` | Delete profile |
-| **POST** | **`/profiles/sync`** | **Sync WonderApply profile for scoring** |
+You can absolutely run Discovery Engine without the Apply Skill — just edit `config/portals.local.yaml` by hand.
 
-Swagger docs: `http://localhost:8091/docs`
+## API
 
-### WonderApply Provider API
+`X-API-Key` is required on every endpoint except `/health`. Keys are defined in `config/api-keys.yaml` and resolved from env vars. Each consumer has a list of `scopes` enforced per route.
 
-The bold endpoints above form the **Provider API** — WonderApply consumes jobs, scores, and company data exclusively through these REST endpoints instead of querying the shared Supabase directly.
+| Method | Path | Scope | Description |
+|--------|------|-------|-------------|
+| GET | `/health` | — | Service health + registered components |
+| POST | `/scrape/{source}` | `scrape:trigger` | Scrape jobs from one source (greenhouse / ashby / lever / personio / rss / indeed / adzuna) |
+| POST | `/enrich/{domain}` | `scrape:trigger` | Run enrichment pipeline against one domain |
+| GET | `/jobs` | `jobs:read` | Paginated job list with filters (keywords, location, distance, source, seniority, salary, …) |
+| GET | `/jobs/{id}` | `jobs:read` | Job detail |
+| GET | `/companies/{domain}` | `jobs:read` | Company profile (Hunter.io + watchlist signals) |
+
+Swagger docs at `http://localhost:8091/docs` once running.
+
+### Filtering example
 
 ```
-WonderApply ──GET /jobs──→ Discovery Engine ──SELECT──→ Supabase
-WonderApply ──GET /companies/{domain}──→ Discovery Engine
-WonderApply ──POST /profiles/sync──→ Discovery Engine (on profile update)
+GET /jobs?keywords_positive=Agile&keywords_positive=Coach
+        &keywords_negative=Junior
+        &location=Berlin&max_distance_km=50
+        &max_age_days=14
+        &source=greenhouse&source=ashby
+        &exclude_domain=spam-staffing.de
+        &sort=score_keyword&limit=50
+X-API-Key: <APPLY_API_KEY>
 ```
 
 ## Configuration
 
-YAML configs in `config/`:
-- `sources.yaml` — Source-specific settings (search terms, limits)
-- `scoring.yaml` — Scorer weights, thresholds, stage gates
-- `enrichment.yaml` — Enricher pipeline steps and dependencies
-- `archetypes.yaml` — Job archetype definitions (keywords DE/EN)
-- `portals.yaml` — Tracked companies for Greenhouse scraping
+| File | Purpose |
+|---|---|
+| `config/sources.yaml` | Per-source settings (search terms, limits, country) |
+| `config/scoring.yaml` | Scorer weights, thresholds, store-threshold gate |
+| `config/enrichment.yaml` | Enricher pipeline order and dependencies |
+| `config/archetypes.yaml` | Role-archetype catalog (keywords DE/EN) |
+| `config/portals.yaml` | Tracked companies for ATS scrapers |
+| `config/data-quality.yaml` | MinHash thresholds + DQ rules |
+| `config/api-keys.yaml` | Per-consumer API key definitions |
+
+`*.local.yaml` overrides are loaded first if present (see `app/config.resolve_local_override`).
 
 ## Docker
 
@@ -90,3 +97,14 @@ YAML configs in `config/`:
 docker compose up -d
 curl http://localhost:8091/health
 ```
+
+## Architecture & contributing
+
+- [CLAUDE.md](CLAUDE.md) — project conventions for AI-assisted development
+- [ROADMAP.md](ROADMAP.md) — multi-tenant evolution path (Variant C, on hold pending consumer alignment)
+- [docs/SCORING.md](docs/SCORING.md) — scoring deep dive
+- [docs/audits/](docs/audits/) — recent system-architecture and publication-readiness audits
+
+## License
+
+[MIT](LICENSE)

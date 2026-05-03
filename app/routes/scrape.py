@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.dependencies import get_consumer, get_supabase
+from app.dependencies import get_supabase, require_scope
 from app.services.scrape_orchestrator import ScrapeOrchestrator
 
 
@@ -17,7 +17,7 @@ class ScrapeRequest(BaseModel):
 def make_scrape_router(source_id: str) -> APIRouter:
     router = APIRouter()
 
-    @router.post("", dependencies=[Depends(get_consumer)])
+    @router.post("", dependencies=[Depends(require_scope("scrape:trigger"))])
     async def scrape(
         request: ScrapeRequest, supabase=Depends(get_supabase)
     ):

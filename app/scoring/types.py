@@ -1,7 +1,7 @@
 """Scoring-internal profile type.
 
 ScoringProfile holds the keyword/archetype signals needed by the scoring
-pipeline.  It is intentionally minimal — consumer-specific profile data
+pipeline. It is intentionally minimal — consumer-specific profile data
 (CV text, embeddings, DB persistence) lives in the consumer layer.
 """
 from pydantic import BaseModel, Field
@@ -21,12 +21,7 @@ class ScoringProfile(BaseModel):
     seniority_penalty: list[str] = Field(
         default_factory=lambda: ["Junior", "Intern", "Trainee", "Werkstudent"]
     )
-    target_roles: list[str] = Field(default_factory=list)
     target_roles_primary: list[str] = Field(default_factory=list)
     target_roles_secondary: list[str] = Field(default_factory=list)
     target_locations: list[str] = Field(default_factory=list)
     negative_domains: list[str] = Field(default_factory=list)
-
-
-# Keep backward-compat alias so existing imports of UserProfile resolve here
-UserProfile = ScoringProfile

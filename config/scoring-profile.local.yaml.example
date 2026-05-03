@@ -1,0 +1,59 @@
+# Single-User Scoring Profile — local override
+#
+# Copy this file to `config/scoring-profile.local.yaml` and fill it in to
+# personalize Stage-1 scoring. The orchestrator will load it at scrape time
+# instead of using an empty default profile. The .local.yaml form is
+# gitignored (see .gitignore).
+#
+# The Apply Skill (github.com/Bundlekund/apply-skill) generates this file
+# automatically from an interactive onboarding flow.
+#
+# Schema mirrors app/scoring/types.py::ScoringProfile.
+
+id: "florian"
+name: "Florian"
+
+# Archetype weights — keys must exist in config/archetypes.yaml.
+# Higher weight = more bonus points when title/description matches keywords
+# of that archetype. 0.0-1.0 scale; > 0 to count.
+archetypes:
+  bridge-builder: 0.9
+  coach: 0.7
+  consultant: 0.6
+  trainer: 0.5
+  change-agent: 0.4
+
+# Free-form positive keywords applied to title (15 pts) + description (5 pts)
+keywords_positive:
+  - "AI"
+  - "Agile"
+  - "Coaching"
+  - "Transformation"
+
+# Free-form negative keywords (penalty)
+keywords_negative:
+  - "Sales"
+  - "Vertrieb"
+
+# Seniority lift / penalty — defaults are sensible for senior IC/lead roles
+seniority_boost: ["Senior", "Lead", "Head", "Principal"]
+seniority_penalty: ["Junior", "Intern", "Trainee", "Werkstudent"]
+
+# Role-name allowlists (primary > secondary). Title matches add fixed bonus.
+target_roles_primary:
+  - "Solutions Architect"
+  - "AI Adoption Lead"
+target_roles_secondary:
+  - "Engineering Manager"
+  - "Solutions Consultant"
+
+# Locations of interest. Exact match → 100, remote → 75, EU/DACH → 50.
+target_locations:
+  - "Berlin"
+  - "Remote"
+  - "Hamburg"
+
+# Domains to penalize (e.g. recruiter portals)
+negative_domains:
+  - "stepstone"
+  - "stellenmarkt"

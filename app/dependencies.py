@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel
 from supabase import create_client, Client
 
@@ -69,3 +69,25 @@ def get_consumer(x_api_key: str = Header(..., alias="X-API-Key")) -> ConsumerIde
     identity = ConsumerIdentity(id=matched["id"], name=matched["name"], scopes=matched["scopes"])
     logger.info("request_authenticated", extra={"consumer_id": identity.id})
     return identity
+
+
+def require_scope(scope: str):
+    """Return a FastAPI dependency that verifies the consumer carries `scope`.
+
+    Use as `Depends(require_scope("jobs:read"))` on a route. Raises 403 if the
+    consumer's `scopes` list does not include the required scope.
+    """
+
+    def _check(consumer: ConsumerIdentity = Depends(get_consumer)) -> ConsumerIdentity:
+        if scope not in consumer.scopes:
+            logger.warning(
+                "scope_denied",
+                extra={"consumer_id": consumer.id, "required_scope": scope},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Consumer '{consumer.id}' missing required scope: {scope}",
+            )
+        return consumer
+
+    return _check

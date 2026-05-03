@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 
@@ -24,7 +25,7 @@ class RssScraper(BaseScraper):
                 if not feed_url:
                     continue
                 try:
-                    parsed = feedparser.parse(feed_url)
+                    parsed = await asyncio.to_thread(feedparser.parse, feed_url)
                     for entry in parsed.entries:
                         posted_at = None
                         if (

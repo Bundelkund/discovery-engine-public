@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -41,7 +42,9 @@ async def health(supabase=Depends(get_supabase)):
     }
     if supabase is not None:
         try:
-            coverage = JobRepository(supabase).get_coverage_metrics()
+            coverage = await asyncio.to_thread(
+                JobRepository(supabase).get_coverage_metrics
+            )
         except Exception as exc:
             logger.warning("coverage_metrics_health_failed", extra={"error": str(exc)})
 

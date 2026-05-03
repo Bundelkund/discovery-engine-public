@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "discovery-engine"
 version = "0.1.0"
 requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Florian Rister" }]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn",

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from jobspy import scrape_jobs
@@ -22,7 +23,8 @@ class IndeedScraper(BaseScraper):
 
             all_jobs = []
             for term in search_terms:
-                jobs_df = scrape_jobs(
+                jobs_df = await asyncio.to_thread(
+                    scrape_jobs,
                     site_name=["indeed"],
                     search_term=term,
                     location="Germany",

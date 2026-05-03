@@ -20,8 +20,6 @@ class ScrapeResponse(BaseModel):
 class ScoreResponse(BaseModel):
     scored: int = 0
     stage1_passed: int = 0
-    stage2_triggered: int = 0
-    stage3_triggered: int = 0
     duration_ms: int = 0
 
 
@@ -44,12 +42,7 @@ class JobListItem(BaseModel):
     company_domain: Optional[str] = None
     final_score: float = 0.0
     score_stage_1: int = 0
-    score_stage_2: Optional[float] = None
-    score_stage_3: Optional[float] = None
     archetype: Optional[str] = ""
-    match_reasoning: Optional[str] = None
-    match_highlights: list[str] = Field(default_factory=list)
-    match_pitch: Optional[str] = None
 
 
 class JobListResponse(BaseModel):
@@ -89,12 +82,7 @@ class JobDetailResponse(BaseModel):
     metadata: Optional[dict] = Field(default_factory=dict)
     final_score: float = 0.0
     score_stage_1: int = 0
-    score_stage_2: Optional[float] = None
-    score_stage_3: Optional[float] = None
     archetype: Optional[str] = ""
-    match_reasoning: Optional[str] = None
-    match_highlights: list[str] = Field(default_factory=list)
-    match_pitch: Optional[str] = None
 
 
 class CompanySignals(BaseModel):

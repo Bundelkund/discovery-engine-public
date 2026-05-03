@@ -31,17 +31,12 @@ def _make_job_row(**kwargs) -> dict:
         "external_id": "ext-1",
         "content_hash": "abc123",
         "score_stage_1": 80,
-        "score_stage_2": 0.75,
-        "score_stage_3": 0.85,
         "archetype": "backend",
         "company_domain": "acme.de",
         "salary_min": 60000,
         "salary_max": 90000,
         "scraped_at": "2026-04-20T10:00:00+00:00",
         "keywords": ["python", "fastapi"],
-        "match_reasoning": "Good fit",
-        "match_highlights": ["Python", "FastAPI"],
-        "match_pitch": "You should apply!",
         "metadata": {},
     }
     defaults.update(kwargs)
@@ -158,9 +153,10 @@ def test_keywords_positive_filter_repo_logic():
     ) = chain
 
     from app.repositories.jobs import JobRepository
+    import asyncio
 
     repo = JobRepository(mock_client)
-    rows, total = repo.query(keywords_positive=["python"])
+    rows, total = asyncio.run(repo.query(keywords_positive=["python"]))
     assert total == 1
     # Verify .or_() was called with ILIKE pattern
     call_args = mock_client.table.return_value.select.return_value.or_.call_args
@@ -215,9 +211,12 @@ def test_pagination(client):
 
 
 def test_pagination_limit_max(client):
-    """limit > 100 returns 422."""
-    resp = client.get("/jobs?limit=101")
-    assert resp.status_code == 422
+    """limit > 500 returns 422 (route declares ge=1, le=500)."""
+    with _patch_query([], 0):
+        resp_ok = client.get("/jobs?limit=500")
+    assert resp_ok.status_code == 200
+    resp_too_big = client.get("/jobs?limit=501")
+    assert resp_too_big.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +347,7 @@ def test_salary_filter(client):
 
 
 def test_job_list_item_fields(client):
-    """JobListItem contains expected nullable match fields."""
+    """JobListItem contains expected baseline fields after Stage-2/3 hard-delete."""
     rows = [_make_job_row()]
     with _patch_query(rows):
         resp = client.get("/jobs")
@@ -356,7 +355,6 @@ def test_job_list_item_fields(client):
     job = resp.json()["jobs"][0]
     assert "id" in job
     assert "title" in job
-    assert "match_reasoning" in job
-    assert "match_highlights" in job
-    assert "match_pitch" in job
     assert "score_stage_1" in job
+    assert "final_score" in job
+    assert "archetype" in job

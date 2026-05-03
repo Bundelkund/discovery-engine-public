@@ -67,4 +67,4 @@ ALTER TABLE jobs
   DROP COLUMN IF EXISTS dq_flags;
 ```
 
-Do NOT run rollback if JobHunt or WonderApply is already writing these columns.
+Do NOT run rollback if any downstream consumer is already writing these columns.

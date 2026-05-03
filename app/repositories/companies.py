@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -23,16 +24,16 @@ class CompanyRepository(BaseRepository):
             "hiring_signal_count": company.hiring_signal_count,
             "enriched_at": datetime.now(timezone.utc).isoformat(),
         }
-        result = (
-            self.client.table(self.TABLE)
+        result = await asyncio.to_thread(
+            lambda: self.client.table(self.TABLE)
             .upsert(data, on_conflict="domain")
             .execute()
         )
         return result.data[0] if result.data else {}
 
     async def get(self, domain: str) -> dict | None:
-        result = (
-            self.client.table(self.TABLE)
+        result = await asyncio.to_thread(
+            lambda: self.client.table(self.TABLE)
             .select("*")
             .eq("domain", domain)
             .execute()
@@ -64,8 +65,8 @@ class CompanyRepository(BaseRepository):
         # Fetch watchlist signals separately
         signals = None
         try:
-            watchlist_result = (
-                self.client.table("company_watchlist")
+            watchlist_result = await asyncio.to_thread(
+                lambda: self.client.table("company_watchlist")
                 .select(
                     "transformation_signal_score, signal_type, "
                     "signal_evidence, kununu_score, kununu_sentiment"

@@ -16,3 +16,4 @@ build/
 excalidraw.log
 config/portals.local.yaml
 config/*.local.yaml
+.understand-anything/

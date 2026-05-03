@@ -48,14 +48,9 @@ class ScoredJob(BaseModel):
     posted_at: Optional[datetime] = None
     content_hash: str = ""
     score_stage_1: int = 0
-    score_stage_2: Optional[float] = None
     archetype: str = ""
     company_domain: str = ""
     profile_id: str = ""
-    score_stage_3: Optional[float] = None
-    match_reasoning: Optional[str] = None
-    match_highlights: Optional[list[str]] = None
-    match_pitch: Optional[str] = None
     # Bundle-B additive columns (migration bundle-b-additive.sql):
     location_normalized: Optional[str] = None
     location_lat: Optional[float] = None

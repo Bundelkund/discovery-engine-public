@@ -1,9 +1,22 @@
 consumers:
+  # Primary consumer for the open-source single-tenant deployment:
+  # the Apply Skill (Claude Code workflow at github.com/Bundlekund/apply-skill).
+  - id: apply-skill
+    name: "Apply Skill"
+    key_env: APPLY_API_KEY
+    scopes: [jobs:read, scrape:trigger]
+    active: true
+
+  # WonderApply integration is on hold pending Variant C (multi-tenant).
+  # See ROADMAP.md. Set active: true only if you have a single shared profile
+  # and accept that all WA users share the same job pool and scoring.
   - id: wonderapply
     name: "WonderApply"
     key_env: WA_API_KEY
     scopes: [jobs:read, scrape:trigger]
-    active: true
+    active: false
+
+  # JobHunt — same caveat as WonderApply.
   - id: jobhunt
     name: "JobHunt"
     key_env: JH_API_KEY

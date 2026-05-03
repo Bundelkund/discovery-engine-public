@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.config import load_enrichment_config
-from app.dependencies import get_consumer, get_supabase
+from app.dependencies import get_supabase, require_scope
 from app.enrichment.pipeline import EnrichmentPipeline
 from app.models.company import CompanyProfile, EnrichmentContext
 from app.repositories.companies import CompanyRepository
@@ -9,7 +9,10 @@ from app.repositories.companies import CompanyRepository
 enrich_router = APIRouter(tags=["enrichment"])
 
 
-@enrich_router.post("/enrich/{domain}", dependencies=[Depends(get_consumer)])
+@enrich_router.post(
+    "/enrich/{domain}",
+    dependencies=[Depends(require_scope("scrape:trigger"))],
+)
 async def enrich_company(domain: str, supabase=Depends(get_supabase)):
     company_repo = CompanyRepository(supabase)
 

@@ -4,7 +4,7 @@ import app.scoring.keyword  # noqa: F401
 
 from app.scoring.pipeline import ScoringPipeline
 from app.models.job import NormalizedJob, ScoredJob
-from app.scoring.types import ScoringProfile as UserProfile
+from app.scoring.types import ScoringProfile
 
 
 def _make_job(title="Agile Coach", desc="coaching agile teams"):
@@ -14,7 +14,7 @@ def _make_job(title="Agile Coach", desc="coaching agile teams"):
 
 
 def _make_profile(archetypes=None, kw_pos=None, kw_neg=None):
-    return UserProfile(
+    return ScoringProfile(
         id="test",
         archetypes=archetypes or {"coach": 1.0},
         keywords_positive=kw_pos or ["Agile"],

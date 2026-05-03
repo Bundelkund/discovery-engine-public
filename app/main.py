@@ -3,10 +3,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-# Import all adapters/scorers/enrichers to trigger self-registration
-from app.sources import *  # noqa: F401, F403
-from app.scoring import *  # noqa: F401, F403
-from app.enrichment import *  # noqa: F401, F403
+# Import the plugin packages to trigger their self-registration side effects.
+# Each package's __init__.py imports every concrete plugin module, which in turn
+# applies the @SourceRegistry.register / @ScorerRegistry.register / @EnricherRegistry.register
+# decorators at import time.
+import app.sources  # noqa: F401
+import app.scoring  # noqa: F401
+import app.enrichment  # noqa: F401
 
 from app.registry.source_registry import SourceRegistry
 from app.routes.health import health_router

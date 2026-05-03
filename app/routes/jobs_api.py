@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.dependencies import ConsumerIdentity, get_consumer, get_supabase
+from app.dependencies import ConsumerIdentity, get_supabase, require_scope
 from app.models.responses import (
     JobDetailResponse,
     JobListItem,
@@ -16,15 +16,6 @@ logger = logging.getLogger(__name__)
 jobs_api_router = APIRouter(prefix="/jobs", tags=["jobs-api"])
 
 MAX_DESCRIPTION_LIST = 500
-
-
-def _compute_final_score(row: dict) -> float:
-    """COALESCE(stage_3, stage_2, stage_1, 0)."""
-    for field in ("score_stage_3", "score_stage_2", "score_stage_1"):
-        val = row.get(field)
-        if val is not None:
-            return float(val)
-    return 0.0
 
 
 def _row_to_list_item(row: dict) -> JobListItem:
@@ -41,8 +32,7 @@ def _row_to_list_item(row: dict) -> JobListItem:
     if isinstance(keywords, str):
         keywords = [k.strip() for k in keywords.split(",") if k.strip()]
 
-    highlights = row.get("match_highlights") or []
-
+    score_stage_1 = row.get("score_stage_1") or 0
     return JobListItem(
         id=row.get("id", ""),
         title=row.get("title", ""),
@@ -57,14 +47,9 @@ def _row_to_list_item(row: dict) -> JobListItem:
         posted_at=row.get("posted_at") or row.get("scraped_at"),
         scraped_at=row.get("scraped_at"),
         company_domain=row.get("company_domain", ""),
-        final_score=_compute_final_score(row),
-        score_stage_1=row.get("score_stage_1") or 0,
-        score_stage_2=row.get("score_stage_2"),
-        score_stage_3=row.get("score_stage_3"),
+        final_score=float(score_stage_1),
+        score_stage_1=score_stage_1,
         archetype=row.get("archetype", ""),
-        match_reasoning=row.get("match_reasoning"),
-        match_highlights=highlights,
-        match_pitch=row.get("match_pitch"),
     )
 
 
@@ -73,8 +58,7 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
     if isinstance(keywords, str):
         keywords = [k.strip() for k in keywords.split(",") if k.strip()]
 
-    highlights = row.get("match_highlights") or []
-
+    score_stage_1 = row.get("score_stage_1") or 0
     return JobDetailResponse(
         id=row.get("id", ""),
         title=row.get("title", ""),
@@ -93,14 +77,9 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
         content_hash=row.get("content_hash", ""),
         company_domain=row.get("company_domain", ""),
         metadata=row.get("metadata") or {},
-        final_score=_compute_final_score(row),
-        score_stage_1=row.get("score_stage_1") or 0,
-        score_stage_2=row.get("score_stage_2"),
-        score_stage_3=row.get("score_stage_3"),
+        final_score=float(score_stage_1),
+        score_stage_1=score_stage_1,
         archetype=row.get("archetype", ""),
-        match_reasoning=row.get("match_reasoning"),
-        match_highlights=highlights,
-        match_pitch=row.get("match_pitch"),
     )
 
 
@@ -111,7 +90,7 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
 
 @jobs_api_router.get("")
 async def list_jobs(
-    consumer: ConsumerIdentity = Depends(get_consumer),
+    consumer: ConsumerIdentity = Depends(require_scope("jobs:read")),
     *,
     # --- MUST-filter params (AC-001) ---
     keywords_positive: list[str] = Query(
@@ -171,7 +150,7 @@ async def list_jobs(
 
     repo = JobRepository(supabase)
 
-    rows, total = repo.query(
+    rows, total = await repo.query(
         keywords_positive=keywords_positive or None,
         keywords_negative=keywords_negative or None,
         location=location,
@@ -244,7 +223,9 @@ async def list_jobs(
     )
 
 
-@jobs_api_router.get("/{job_id}", dependencies=[Depends(get_consumer)])
+@jobs_api_router.get(
+    "/{job_id}", dependencies=[Depends(require_scope("jobs:read"))]
+)
 async def get_job(
     job_id: str,
     supabase=Depends(get_supabase),

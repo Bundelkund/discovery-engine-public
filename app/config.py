@@ -47,18 +47,22 @@ def resolve_local_override(path: str | Path) -> Path:
     return local if local.exists() else p
 
 
+@lru_cache
 def load_sources_config() -> dict:
     return load_yaml("sources.yaml")
 
 
+@lru_cache
 def load_scoring_config() -> dict:
     return load_yaml("scoring.yaml")
 
 
+@lru_cache
 def load_enrichment_config() -> dict:
     return load_yaml("enrichment.yaml")
 
 
+@lru_cache
 def load_archetypes_config() -> dict:
     return load_yaml("archetypes.yaml")
 
