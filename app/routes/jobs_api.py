@@ -134,7 +134,7 @@ async def list_jobs(
         pattern="^(recency|score_keyword)$",
         description="Sort order: recency (scraped_at DESC) or score_keyword (score_stage_1 DESC, NULL-last)",
     ),
-    limit: int = Query(50, ge=1, le=100, description="Max rows returned (default 50, max 100)"),
+    limit: int = Query(50, ge=1, le=500, description="Max rows returned (default 50, max 500)"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     # --- SHOULD-filter params (AC-015-AC-018) ---
     source: list[str] = Query(default=[], description="Exact-match whitelist on source column"),
