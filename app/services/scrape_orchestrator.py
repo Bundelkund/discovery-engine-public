@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from app.config import (
     load_enrichment_config,
     load_scoring_config,
+    load_scoring_profile,
     load_sources_config,
 )
 from app.data_quality.context import get_dq_context
@@ -46,11 +47,10 @@ class ScrapeOrchestrator:
         errors: list[str] = []
         response = ScrapeResponse(source=source_id, profile_id=profile_id or "")
 
-        # Profile loading is handled by the consumer layer (e.g. WonderApply).
-        # The orchestrator uses an empty ScoringProfile so stage-1 keyword
-        # scoring runs without error; scores will be low until the consumer
-        # injects real profile data via the Phase 3 Query-API.
-        profile = ScoringProfile(id=profile_id or "")
+        # Single-user mode: prefer config/scoring-profile.local.yaml when
+        # present (written by the Apply Skill onboarding flow). Falls back to
+        # an empty ScoringProfile so stage-1 scoring still runs.
+        profile = load_scoring_profile() or ScoringProfile(id=profile_id or "")
 
         try:
             # 1. Fetch jobs from source

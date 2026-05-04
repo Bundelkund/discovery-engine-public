@@ -74,7 +74,8 @@ backlog:
     title: "Profile-File loading from config/scoring-profile.local.yaml"
     size: "S"
     priority: "P1"
-    status: "ready"
+    status: "done"
+    completed_at: "2026-05-04"
     created_at: "2026-05-03"
     estimate_minutes: 60
     description: |
@@ -93,6 +94,11 @@ backlog:
     isc:
       - "Run with profile present: jobs are scored using the configured archetypes"
       - "Run without profile: backward compatible, no errors"
+    notes: |
+      Implemented load_scoring_profile() in app/config.py (lru_cache, lazy
+      import to avoid app.scoring->app.config cycle). ScrapeOrchestrator now
+      prefers the loaded profile and falls back to empty default. 4 new tests,
+      full suite 122/122 passing.
 
   - id: "DE-FOLLOWUP-05"
     title: "Fix test_pagination_limit_max"

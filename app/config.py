@@ -1,10 +1,13 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+
+if TYPE_CHECKING:
+    from app.scoring.types import ScoringProfile
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 REPO_ROOT = Path(__file__).parent.parent
@@ -103,3 +106,26 @@ def load_data_quality_config() -> DataQualityConfig:
     """Load and validate data-quality.yaml, returning a Pydantic model."""
     raw: dict[str, Any] = load_yaml("data-quality.yaml")
     return DataQualityConfig.model_validate(raw)
+
+
+# ---------------------------------------------------------------------------
+# Single-User Scoring Profile (optional override)
+# ---------------------------------------------------------------------------
+
+
+@lru_cache
+def load_scoring_profile() -> "ScoringProfile | None":
+    """Load the single-user scoring profile from config/scoring-profile.local.yaml.
+
+    Returns None when the file is absent so the orchestrator can fall back to
+    an empty profile (backwards compatible). The Apply Skill's onboarding flow
+    is the canonical writer of this file. Cache invalidates only on process
+    restart; profiles change rarely and a restart is cheap.
+    """
+    from app.scoring.types import ScoringProfile
+
+    path = REPO_ROOT / "config" / "scoring-profile.local.yaml"
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return ScoringProfile.model_validate(yaml.safe_load(f))
