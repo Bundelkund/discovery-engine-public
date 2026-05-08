@@ -115,6 +115,89 @@ backlog:
     acceptance_criteria:
       - "pytest tests/ exits 0 (118 passed)"
 
+  - id: "DE-FOLLOWUP-06"
+    title: "Decide on parallel n8n scrapers (Indeed / RSS / LinkedIn) — consolidate via DE or document split"
+    size: "M"
+    priority: "P2"
+    status: "ready"
+    created_at: "2026-05-05"
+    estimate_minutes: 180
+    description: |
+      Today the n8n landscape has TWO parallel scraping paths writing into
+      the same Supabase `jobs` table:
+
+      Path A — DE-routed (DE on Coolify is owner):
+        Workflow: zZ6hfQlhXpsQtZrn  "DE - ATS Scrape Trigger"
+        Schedule: 04:30 Berlin daily
+        Sources: greenhouse, ashby, lever, personio  (DE reads portals.local.yaml)
+        URL:     https://discovery-engine.konektos.de/scrape/{source}
+
+      Path B — n8n-direct (legacy JobHunt workflows, bypass DE):
+        - 9zaIAPAwGuaZ49kJ  "JobHunt - BerlinStartupJobs RSS"   07:30 Berlin
+        - GCCHVw0lrdHJR1oz  "JobHunt - JobSpy Scheduler"        Indeed via jobspy
+        - GAjrKbbM0cdJFlhX  "JobHunt - Apify LinkedIn Scraper"  LinkedIn
+        - ZHkDtw0ld6JiI2AD  "JobHunt - Personio ATS Scraper"    06:30 Berlin (DUPLICATE of DE personio)
+        - x4HZK9IT269vLxkR  "JobHunt - Daily Job Scraper"
+        - 0wVvYhyGZPbcvehq  "JobHunt - Daily Event Scraper"
+        - yKYAs15d6ZsMhHyZ  "JobHunt - Firecrawl Career Sites Scraper"
+        - 7zdQJLUiLvSHzPLP  "JobHunt - Prio-1 Niche Portals Scraper"
+        - pSV3RwFedPa6t2dh  "JobHunt - Tier 2 Niche Portals Scraper"
+        - yN6OVYkcBnBmRwi4  "JobHunt - Niche Portals Scraper"
+        - t9Ub8tRZrvzO0X1S  "JobHunt - Deutsche Job-Boards Scraper"
+
+      Konkrete Aufgaben:
+      1. JobHunt-Personio-Scraper sofort deaktivieren (DUPLICATE — DE
+         deckt das schon ab). Wenn dedup im DE greift entstehen keine
+         doppelten Rows, aber Personio-API-Quota wird unnoetig verbrannt.
+      2. BerlinStartupJobs-RSS-Feed-URL in
+         discovery-engine/config/sources.yaml unter `rss.feeds`
+         hinzufuegen, dann den Source-Set in n8n Workflow zZ6hfQlhXpsQtZrn
+         um "rss" erweitern. JobHunt-RSS-Workflow danach deaktivieren.
+      3. Indeed: DE hat bereits app/sources/indeed.py (jobspy-Wrapper).
+         "indeed" zum Source-Set in zZ6hfQlhXpsQtZrn ergaenzen, JobHunt-
+         JobSpy-Scheduler nach Verifikation deaktivieren.
+      4. LinkedIn: DE hat keinen LinkedIn-Scraper. Entweder
+         Apify-Adapter in DE bauen (M-T Aufwand) oder JobHunt-Workflow
+         als legacy belassen und in dieser Datei dokumentieren.
+      5. Niche-Portal-Workflows (Firecrawl/Prio-1/Tier-2/Deutsche
+         Boards): pruefen ob die noch erforderlich sind oder bereits von
+         portals.local.yaml + ATS-Scrapern abgedeckt werden.
+
+      Architektur-Entscheidung dokumentieren in
+      florian-knowledge/dev/projects/discovery-engine/INDEX.md:
+      welche Quellen ueber DE laufen, welche nicht, warum.
+    acceptance_criteria:
+      - "JobHunt - Personio ATS Scraper deaktiviert"
+      - "BerlinStartupJobs-Feed in DE sources.yaml + RSS in DE-Trigger Source-Set"
+      - "Indeed in DE-Trigger Source-Set; mind. 1 erfolgreicher Lauf in n8n"
+      - "INDEX.md im florian-knowledge DE-Projekt dokumentiert finalen Pfad pro Quelle"
+    isc:
+      - "Supabase: keine doppelten Personio-Rows nach 7 Tagen Lauf"
+      - "Source-Verteilung in DB enthaelt rss + indeed via DE (jobs_stored > 0)"
+      - "DE-Trigger Build-Summary Output ist menschlich lesbar (Bug DE-FOLLOWUP-07 vorausgesetzt)"
+
+  - id: "DE-FOLLOWUP-07"
+    title: "n8n Build-Summary-Node liest falsche DE-Response-Felder (FIXED 2026-05-05)"
+    size: "S"
+    priority: "P3"
+    status: "done"
+    completed_at: "2026-05-05"
+    created_at: "2026-05-05"
+    estimate_minutes: 10
+    description: |
+      Workflow zZ6hfQlhXpsQtZrn "DE - ATS Scrape Trigger", Code-Node
+      "Build Summary" las r.inserted / r.updated / r.error — DE's
+      ScrapeResponse hat aber jobs_stored / jobs_new / jobs_duplicate /
+      jobs_found / jobs_enriched / errors[]. Folge: Telegram/Log-Output
+      zeigte fuer jeden Lauf "+0 new, ~0 updated" obwohl Jobs gespeichert
+      wurden.
+
+      Fix via n8n MCP applied 2026-05-05. Naechster Lauf 04:30 Berlin
+      verifiziert die korrigierte Summary.
+    acceptance_criteria:
+      - "Code liest jobs_stored, jobs_new, jobs_found, jobs_enriched, errors[]"
+      - "Output zeigt nicht mehr +0 wenn Rows tatsaechlich gespeichert wurden"
+
   # =========================================================================
   # Variant C — Multi-Tenant (BLOCKED on consumer alignment)
   # =========================================================================
