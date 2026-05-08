@@ -5,3 +5,4 @@ from app.sources import rss as rss
 from app.sources import ashby as ashby
 from app.sources import lever as lever
 from app.sources import personio as personio
+from app.sources import linkedin as linkedin

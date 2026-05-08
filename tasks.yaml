@@ -156,9 +156,13 @@ backlog:
       3. Indeed: DE hat bereits app/sources/indeed.py (jobspy-Wrapper).
          "indeed" zum Source-Set in zZ6hfQlhXpsQtZrn ergaenzen, JobHunt-
          JobSpy-Scheduler nach Verifikation deaktivieren.
-      4. LinkedIn: DE hat keinen LinkedIn-Scraper. Entweder
-         Apify-Adapter in DE bauen (M-T Aufwand) oder JobHunt-Workflow
-         als legacy belassen und in dieser Datei dokumentieren.
+      4. LinkedIn: DE-Adapter `app/sources/linkedin.py` 2026-05-08 gebaut
+         (Apify Actor `curious_coder/linkedin-jobs-scraper`, 24 Terms,
+         9 Tests gruen). source_id = "linkedin". `linkedin` ins Source-
+         Set in zZ6hfQlhXpsQtZrn ergaenzt + HTTP-Timeout auf 720s.
+         Pendant: APIFY_API_TOKEN in Coolify env setzen + Redeploy,
+         dann JobHunt-Apify-LinkedIn-Workflow GAjrKbbM0cdJFlhX
+         deaktivieren.
       5. Niche-Portal-Workflows (Firecrawl/Prio-1/Tier-2/Deutsche
          Boards): pruefen ob die noch erforderlich sind oder bereits von
          portals.local.yaml + ATS-Scrapern abgedeckt werden.

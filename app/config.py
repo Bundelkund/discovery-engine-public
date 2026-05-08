@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # de_api_key removed in Phase 5 — replaced by per-consumer keys in config/api-keys.yaml
     de_api_key: str = ""
     hunter_api_key: str = ""
+    apify_api_token: str = ""
 
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",

@@ -28,3 +28,34 @@ sources:
   personio:
     enabled: true
     portals_file: "config/portals.yaml"
+  linkedin:
+    enabled: true
+    location: "Berlin"
+    results_per_term: 25
+    scrape_company: false
+    timeout_s: 600
+    search_terms:
+      - "KI Berater"
+      - "KI Trainer"
+      - "KI Coach"
+      - "KI Consultant"
+      - "KI Enablement"
+      - "AI Transformation"
+      - "AI Coach"
+      - "AI Trainer"
+      - "Agile Coach"
+      - "Agile Coach KI"
+      - "Scrum Master"
+      - "New Work Berater"
+      - "Organisationsentwicklung"
+      - "Change Manager"
+      - "Change Consultant"
+      - "Innovation Consultant"
+      - "Transformation Manager"
+      - "Context Engineer"
+      - "Prompt Engineer"
+      - "Agentic AI"
+      - "RAG Engineer"
+      - "Head of AI"
+      - "Lead AI Coach"
+      - "AI Enablement Lead"
