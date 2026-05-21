@@ -6,3 +6,6 @@ from app.sources import ashby as ashby
 from app.sources import lever as lever
 from app.sources import personio as personio
 from app.sources import linkedin as linkedin
+from app.sources import recruitee as recruitee
+from app.sources import breezy as breezy
+from app.sources import factorial as factorial

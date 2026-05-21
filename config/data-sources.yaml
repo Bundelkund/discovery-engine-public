@@ -45,3 +45,18 @@ python_scrapers:
     module: app.sources.personio
     api: Personio ATS API
     notes: "ATS scraper for Personio-hosted boards."
+
+  recruitee:
+    module: app.sources.recruitee
+    api: "{slug}.recruitee.com/api/offers (public JSON, no auth)"
+    notes: "ATS scraper for Recruitee-hosted boards. Slug from careers_url ending in .recruitee.com."
+
+  breezy:
+    module: app.sources.breezy
+    api: "{slug}.breezy.hr/json (public JSON list, no auth)"
+    notes: "ATS scraper for Breezy.hr-hosted boards. List response has no description field — title/location/url only."
+
+  factorial:
+    module: app.sources.factorial
+    api: "{slug}.factorialhr.{de|com}/sitemap.xml (no JSON endpoint available)"
+    notes: "ATS scraper for Factorial HR career pages. Falls back to sitemap.xml + URL-slug title extraction since Factorial has no public unauthenticated JSON feed. Description empty in v1; enhance via detail-page fetch if needed."

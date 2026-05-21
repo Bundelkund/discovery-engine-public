@@ -1,7 +1,8 @@
 # Portal Scanner — Demo Configuration
 #
 # This is a SHIPPED EXAMPLE. The application reads it for the Greenhouse,
-# Ashby, Lever, and Personio scrapers. Replace `tracked_companies` with
+# Ashby, Lever, Personio, Recruitee, Breezy, and Factorial scrapers.
+# Replace `tracked_companies` with
 # your own targets, or — to keep your private list out of git — copy this
 # file to `config/portals.local.yaml` and edit there. The application
 # prefers `*.local.yaml` if present (see `app/config.resolve_local_override`).

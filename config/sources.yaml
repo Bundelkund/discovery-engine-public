@@ -28,6 +28,15 @@ sources:
   personio:
     enabled: true
     portals_file: "config/portals.yaml"
+  recruitee:
+    enabled: true
+    portals_file: "config/portals.yaml"
+  breezy:
+    enabled: true
+    portals_file: "config/portals.yaml"
+  factorial:
+    enabled: true
+    portals_file: "config/portals.yaml"
   linkedin:
     enabled: true
     location: "Berlin"
