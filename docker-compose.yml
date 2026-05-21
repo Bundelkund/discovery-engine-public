@@ -5,3 +5,5 @@ services:
       - "8091:8091"
     env_file:
       - .env
+    volumes:
+      - ./config/portals.local.yaml:/app/config/portals.local.yaml:ro
