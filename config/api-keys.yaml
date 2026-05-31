@@ -7,14 +7,15 @@ consumers:
     scopes: [jobs:read, scrape:trigger]
     active: true
 
-  # WonderApply integration is on hold pending Variant C (multi-tenant).
-  # See ROADMAP.md. Set active: true only if you have a single shared profile
-  # and accept that all WA users share the same job pool and scoring.
+  # WonderApply integration: activated 2026-05-31 for single-tenant production
+  # use (Florian is the sole WA user). Variant C (multi-tenant) is still on the
+  # ROADMAP — flip back to active: false when multi-user rollout begins, or
+  # replace this consumer with per-user keys once Variant C lands.
   - id: wonderapply
     name: "WonderApply"
     key_env: WA_API_KEY
     scopes: [jobs:read, scrape:trigger]
-    active: false
+    active: true
 
   # JobHunt — same caveat as WonderApply.
   - id: jobhunt
