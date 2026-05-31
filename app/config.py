@@ -116,16 +116,28 @@ def load_data_quality_config() -> DataQualityConfig:
 
 @lru_cache
 def load_scoring_profile() -> "ScoringProfile | None":
-    """Load the single-user scoring profile from config/scoring-profile.local.yaml.
+    """Load the single-user scoring profile.
 
-    Returns None when the file is absent so the orchestrator can fall back to
-    an empty profile (backwards compatible). The Apply Skill's onboarding flow
-    is the canonical writer of this file. Cache invalidates only on process
-    restart; profiles change rarely and a restart is cheap.
+    Resolution order (analogous to portals.yaml / portals.local.yaml):
+      1. config/scoring-profile.local.yaml  (user override, gitignored)
+      2. config/scoring-profile.yaml        (committed default)
+      3. None                               (no file at all)
+
+    Returns None only if neither file exists, so the orchestrator can
+    fall back to an empty profile. The Apply Skill's onboarding flow
+    is the canonical writer of the .local.yaml form. Cache invalidates
+    only on process restart; profiles change rarely and a restart is
+    cheap.
+
+    History: before DE-FOLLOWUP-11 fix (2026-05-31) only the
+    .local.yaml path was checked. Production Coolify deploys did not
+    have the file -> empty ScoringProfile -> jobs.archetype universally
+    empty. Committing the .yaml default unblocks single-tenant deploys
+    without taking away the .local override.
     """
     from app.scoring.types import ScoringProfile
 
-    path = REPO_ROOT / "config" / "scoring-profile.local.yaml"
+    path = resolve_local_override(REPO_ROOT / "config" / "scoring-profile.yaml")
     if not path.exists():
         return None
     with open(path) as f:

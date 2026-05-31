@@ -256,9 +256,10 @@ async def test_run_falls_back_to_empty_profile_when_no_local_file():
     assert result.jobs_found == 0
 
 
-def test_load_scoring_profile_returns_none_when_file_missing(tmp_path, monkeypatch):
-    """load_scoring_profile() returns None if config/scoring-profile.local.yaml
-    does not exist."""
+def test_load_scoring_profile_returns_none_when_no_file_exists(tmp_path, monkeypatch):
+    """load_scoring_profile() returns None when neither the .local.yaml
+    override NOR the committed scoring-profile.yaml default exists.
+    (DE-FOLLOWUP-11: resolution order is now .local -> .yaml -> None.)"""
     from app import config as config_module
 
     config_module.load_scoring_profile.cache_clear()
@@ -268,9 +269,9 @@ def test_load_scoring_profile_returns_none_when_file_missing(tmp_path, monkeypat
     config_module.load_scoring_profile.cache_clear()
 
 
-def test_load_scoring_profile_parses_yaml_when_file_present(tmp_path, monkeypatch):
-    """load_scoring_profile() returns a populated ScoringProfile when the
-    YAML file exists."""
+def test_load_scoring_profile_parses_local_yaml_when_present(tmp_path, monkeypatch):
+    """load_scoring_profile() returns the .local.yaml override when present
+    even if a sibling scoring-profile.yaml default also exists."""
     from app import config as config_module
 
     config_module.load_scoring_profile.cache_clear()
@@ -285,6 +286,11 @@ def test_load_scoring_profile_parses_yaml_when_file_present(tmp_path, monkeypatc
         "  - Agile\n",
         encoding="utf-8",
     )
+    # Sanity: a default also exists but .local must win
+    (config_dir / "scoring-profile.yaml").write_text(
+        "id: default\nname: Default\narchetypes: {}\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(config_module, "REPO_ROOT", tmp_path)
 
     profile = config_module.load_scoring_profile()
@@ -292,4 +298,29 @@ def test_load_scoring_profile_parses_yaml_when_file_present(tmp_path, monkeypatc
     assert profile.id == "florian"
     assert profile.archetypes == {"coach": 0.7}
     assert profile.keywords_positive == ["Agile"]
+    config_module.load_scoring_profile.cache_clear()
+
+
+def test_load_scoring_profile_falls_back_to_committed_default(tmp_path, monkeypatch):
+    """When only the committed scoring-profile.yaml exists (no .local override),
+    that default profile is returned. (DE-FOLLOWUP-11 unblock: production
+    Coolify deploys without a .local file now get a populated profile.)"""
+    from app import config as config_module
+
+    config_module.load_scoring_profile.cache_clear()
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "scoring-profile.yaml").write_text(
+        "id: default\n"
+        "name: Default Profile\n"
+        "archetypes:\n"
+        "  trainer: 0.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "REPO_ROOT", tmp_path)
+
+    profile = config_module.load_scoring_profile()
+    assert profile is not None
+    assert profile.id == "default"
+    assert profile.archetypes == {"trainer": 0.5}
     config_module.load_scoring_profile.cache_clear()
