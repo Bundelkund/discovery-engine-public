@@ -19,6 +19,8 @@ sources:
     feeds:
       - name: "Arbeit.swiss AI"
         url: "https://www.arbeit.swiss/secoalv/l10n/api/public/v1/jobPostings.atom"
+      - name: "BerlinStartupJobs"
+        url: "https://berlinstartupjobs.com/feed/"
   ashby:
     enabled: true
     portals_file: "config/portals.yaml"
