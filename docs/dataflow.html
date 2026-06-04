@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Job-Search Engine — How It Works</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  body { margin:0; background:#0d1117; font-family:'Segoe UI',system-ui,sans-serif; }
+  #wrap { padding:32px; }
+  h1 { color:#e6edf3; font-size:22px; margin:0 0 4px; }
+  .sub { color:#8b949e; font-size:13px; margin:0 0 24px; }
+  .mermaid { background:#0d1117; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>Job-Search Engine &mdash; Where jobs come from, how they get filtered &amp; stored</h1>
+  <p class="sub">Job sources &rarr; filter funnel &rarr; database (kept permanently). Outdated ones are only hidden when displayed, never deleted.</p>
+<pre class="mermaid">
+flowchart TB
+
+subgraph SEL["WHAT WE SEARCH FOR"]
+  direction LR
+  ST["Search terms<br/>4 terms (e.g. AI Consultant,<br/>KI Berater, Agile Coach,<br/>Transformation Manager)<br/>LinkedIn: 24 terms<br/>The Muse: none -> all of DE"]
+  PT["Saved companies<br/>target employers<br/>(e.g. 5 companies)"]
+  EV["Access keys<br/>per job portal<br/>(stored securely)"]
+end
+
+subgraph SRC["JOB SOURCES"]
+  direction LR
+  subgraph KW["Job search engines (search by terms)"]
+    direction TB
+    K1["Indeed"]
+    K2["Adzuna"]
+    K3["Careerjet"]
+    K4["Jooble"]
+    K5["The Muse"]
+    K6["LinkedIn"]
+    K7["News feeds (RSS)"]
+  end
+  subgraph AT["Company career pages (search per company)"]
+    direction TB
+    A1["Greenhouse"]
+    A2["Ashby"]
+    A3["Lever"]
+    A4["Personio"]
+    A5["Recruitee"]
+    A6["Breezy"]
+    A7["Factorial"]
+  end
+end
+
+ST --> KW
+PT --> AT
+EV -. "unlocks access" .-> KW
+
+KW -- "raw jobs" --> P
+AT -- "raw jobs" --> P
+
+subgraph P["FILTER FUNNEL"]
+  direction TB
+  P1["1. Fetch<br/>per source, error -> just empty"]
+  P2["2. Standardize<br/>same format for all"]
+  P3["3. Remove duplicates<br/>exact same job only once"]
+  P4["4. Remove near-matches<br/>spot almost-identical descriptions"]
+  P5["5. Check location &amp; quality<br/>no title/link -> dropped<br/>(strict only after 7-day grace period)"]
+  P6["6. Score relevance<br/>ALL are kept<br/>score = only the ordering"]
+  P1 --> P2 --> P3 --> P4 --> P5 --> P6
+end
+
+P6 -- "store" --> DB[("Database: Jobs<br/>with stored-on date<br/>kept PERMANENTLY &middot; never deleted")]
+P6 -- "7. Add company info" --> CO[("Database: Companies<br/>profile per employer")]
+
+DB -- "query fresh jobs" --> JH["Application tool<br/>hides old ones when displaying<br/>(deletes nothing)"]
+
+classDef sel fill:#21262d,stroke:#6e7681,color:#e6edf3;
+classDef kw fill:#0f2e1a,stroke:#2ea043,color:#e6edf3;
+classDef ats fill:#2e1f0f,stroke:#bb8009,color:#e6edf3;
+classDef pipe fill:#0f1f2e,stroke:#1f6feb,color:#e6edf3;
+classDef store fill:#2e0f1f,stroke:#da3633,color:#e6edf3;
+classDef cons fill:#1f0f2e,stroke:#8957e5,color:#e6edf3;
+
+class ST,PT,EV sel;
+class K1,K2,K3,K4,K5,K6,K7 kw;
+class A1,A2,A3,A4,A5,A6,A7 ats;
+class P1,P2,P3,P4,P5,P6 pipe;
+class DB,CO store;
+class JH cons;
+</pre>
+</div>
+<script>
+  mermaid.initialize({ startOnLoad:true, theme:'dark', flowchart:{ useMaxWidth:false, htmlLabels:true } });
+</script>
+</body>
+</html>

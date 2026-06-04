@@ -1,0 +1,23 @@
+{
+  "prompt": "Modern dark isometric tech infographic showing the data flow of a job-discovery engine, left to right. Top-left: a glowing GREEN panel labeled 'KEYWORD APIs' with a magnet icon, listing indeed, adzuna, careerjet, jooble, themuse, linkedin, rss. Top-right: a glowing ORANGE panel labeled 'ATS PORTALS' with a building icon, listing greenhouse, lever, personio, factorial. Both panels feed arrows down into a central BLUE vertical funnel-shaped pipeline of 6 glowing stages stacked top to bottom: fetch, normalize, dedup, MinHash, quality rules, score. The pipeline bottom connects to a RED database cylinder labeled 'Supabase JOBS' with a small infinity clock symbol meaning permanent storage no expiry. An arrow goes right from the cylinder to a VIOLET panel labeled 'rank-jobs' with a filter funnel icon. Clean neon lines on near-black background, professional architecture diagram for a presentation, crisp short labels.",
+  "negative_prompt": "blurry, distorted, cluttered, photorealistic people, watermark, signature, low quality, oversaturated, paragraphs of text, gibberish text, misspelled words",
+  "settings": {
+    "resolution": "4k",
+    "aspect_ratio": "16:9",
+    "style": "isometric_3d",
+    "lighting": "neon",
+    "color_grading": "neon_pop"
+  },
+  "camera": {
+    "angle": "high_angle",
+    "lens": "35mm",
+    "focus": "sharp",
+    "depth_of_field": "deep",
+    "distance": "wide_shot"
+  },
+  "composition": {
+    "layout": "diagonal",
+    "framing": "environmental",
+    "background": "near-black dark dashboard with subtle grid"
+  }
+}
