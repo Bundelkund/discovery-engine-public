@@ -28,6 +28,7 @@ sources:
     enabled: true
     # api_key via .env (JOOBLE_API_KEY) — nicht hier (sources.yaml ist git-tracked)
     api_key: null
+    host: "de.jooble.org"  # DE-Key ist an DE-Host gebunden (jooble.org -> 403)
     location: "Deutschland"
     limit: 50
     search_terms: ["AI Consultant", "KI Berater", "Agile Coach", "Transformation Manager"]

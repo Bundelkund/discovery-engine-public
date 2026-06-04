@@ -19,7 +19,8 @@ class JoobleScraper(BaseScraper):
     """
 
     source_id = "jooble"
-    BASE_URL = "https://jooble.org/api/{key}"
+    BASE_URL = "https://{host}/api/{key}"
+    DEFAULT_HOST = "jooble.org"
     DEFAULT_UA = "Mozilla/5.0 (compatible; discovery-engine/1.0)"
 
     async def fetch(self, config: dict) -> list[RawJob]:
@@ -32,7 +33,8 @@ class JoobleScraper(BaseScraper):
             location = config.get("location", "Deutschland")
             limit = config.get("limit", 50)
             search_terms = config.get("search_terms", ["AI Consultant"])
-            url = self.BASE_URL.format(key=api_key)
+            host = config.get("host", self.DEFAULT_HOST)
+            url = self.BASE_URL.format(host=host, key=api_key)
             headers = {"User-Agent": config.get("user_agent", self.DEFAULT_UA)}
 
             all_jobs = []
