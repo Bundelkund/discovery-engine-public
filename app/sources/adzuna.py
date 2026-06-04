@@ -2,6 +2,7 @@ import logging
 
 import httpx
 
+from app.config import get_settings
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
 from app.sources.base import BaseScraper
@@ -16,8 +17,9 @@ class AdzunaScraper(BaseScraper):
 
     async def fetch(self, config: dict) -> list[RawJob]:
         try:
-            app_id = config.get("app_id")
-            app_key = config.get("app_key")
+            settings = get_settings()
+            app_id = config.get("app_id") or settings.adzuna_app_id
+            app_key = config.get("app_key") or settings.adzuna_app_key
             if not app_id or not app_key:
                 logger.warning("Adzuna: missing app_id or app_key, skipping")
                 return []

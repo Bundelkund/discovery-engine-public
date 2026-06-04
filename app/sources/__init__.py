@@ -9,3 +9,6 @@ from app.sources import linkedin as linkedin
 from app.sources import recruitee as recruitee
 from app.sources import breezy as breezy
 from app.sources import factorial as factorial
+from app.sources import careerjet as careerjet
+from app.sources import jooble as jooble
+from app.sources import themuse as themuse

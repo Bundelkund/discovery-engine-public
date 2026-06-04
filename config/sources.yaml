@@ -9,10 +9,33 @@ sources:
     enabled: true
     portals_file: "config/portals.yaml"
   adzuna:
-    enabled: false
+    enabled: true
+    # Keys via .env (ADZUNA_APP_ID / ADZUNA_APP_KEY) — nicht hier eintragen (sources.yaml ist git-tracked)
     app_id: null
     app_key: null
     country: "de"
+    limit: 50
+    search_terms: ["AI Consultant", "KI Berater", "Agile Coach", "Transformation Manager"]
+  careerjet:
+    enabled: true
+    # affid via .env (CAREERJET_AFFID) — nicht hier (sources.yaml ist git-tracked)
+    affid: null
+    locale_code: "de_DE"
+    location: "Deutschland"
+    limit: 50
+    search_terms: ["AI Consultant", "KI Berater", "Agile Coach", "Transformation Manager"]
+  jooble:
+    enabled: true
+    # api_key via .env (JOOBLE_API_KEY) — nicht hier (sources.yaml ist git-tracked)
+    api_key: null
+    location: "Deutschland"
+    limit: 50
+    search_terms: ["AI Consultant", "KI Berater", "Agile Coach", "Transformation Manager"]
+  themuse:
+    enabled: true
+    # api_key via .env (THEMUSE_API_KEY) optional — laeuft auch keyless (rate-limited)
+    api_key: null
+    location: "Germany"
     limit: 50
   rss:
     enabled: true

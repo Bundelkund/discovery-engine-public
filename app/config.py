@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     de_api_key: str = ""
     hunter_api_key: str = ""
     apify_api_token: str = ""
+    adzuna_app_id: str = ""
+    adzuna_app_key: str = ""
+    careerjet_affid: str = ""
+    jooble_api_key: str = ""
+    themuse_api_key: str = ""
 
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",
