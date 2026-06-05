@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from app.config import (
     load_enrichment_config,
+    load_resolution_config,
     load_scoring_config,
     load_scoring_profile,
     load_sources_config,
@@ -11,6 +12,7 @@ from app.config import (
 from app.data_quality.context import get_dq_context
 from app.deduplication.dedup import DeduplicationService
 from app.enrichment.pipeline import EnrichmentPipeline
+from app.resolution.description_resolver import DescriptionResolver
 from app.models.company import CompanyProfile, EnrichmentContext
 from app.models.responses import ScrapeResponse
 from app.registry.source_registry import SourceRegistry
@@ -81,6 +83,20 @@ class ScrapeOrchestrator:
             if not new_jobs:
                 response.duration_ms = int((time.time() - start) * 1000)
                 return response
+
+            # 4a. Resolve thin descriptions from posting origin (ATS / career page).
+            # Runs before MinHash + Stage-1 so near-dup detection and keyword
+            # scoring both see full text. Best-effort: failures leave jobs as-is.
+            try:
+                res_cfg = load_resolution_config().get("resolution", {})
+                if res_cfg.get("enabled", True):
+                    resolver = DescriptionResolver(res_cfg)
+                    response.descriptions_resolved = await resolver.resolve_batch(
+                        new_jobs
+                    )
+            except Exception as e:
+                logger.error("Description resolution failed: %s", e)
+                errors.append(f"resolution: {e}")
 
             # 4b. MinHash near-duplicate filter
             minhash_filtered: list = []

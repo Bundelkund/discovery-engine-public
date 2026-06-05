@@ -13,6 +13,7 @@ class ScrapeResponse(BaseModel):
     jobs_below_threshold: int = 0
     jobs_stored: int = 0
     jobs_enriched: int = 0
+    descriptions_resolved: int = 0
     duration_ms: int = 0
     errors: list[str] = Field(default_factory=list)
 

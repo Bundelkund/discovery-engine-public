@@ -256,6 +256,64 @@ async def test_run_falls_back_to_empty_profile_when_no_local_file():
     assert result.jobs_found == 0
 
 
+# ---------------------------------------------------------------------------
+# Slice B: step 4a description resolution runs and reports count
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_resolves_descriptions_before_scoring():
+    """run() invokes DescriptionResolver.resolve_batch on new jobs and records
+    the count on the response."""
+    from app.deduplication.dedup import DeduplicationService
+    from app.models.job import NormalizedJob
+
+    orch = _make_orchestrator()
+
+    job = NormalizedJob(
+        title="AI Coach",
+        url="https://acme.softgarden.io/job/1",
+        source="adzuna",
+        external_id="ad-1",
+        description="",  # thin -> resolution target
+    )
+
+    async def _pass_through(batch):
+        return batch, 0
+
+    async def _fake_resolve(jobs):
+        for j in jobs:
+            j.description = "backfilled full description from origin"
+        return len(jobs)
+
+    with (
+        patch(
+            "app.services.scrape_orchestrator.load_sources_config",
+            return_value={"sources": {"adzuna": {}}},
+        ),
+        patch(
+            "app.services.scrape_orchestrator.load_resolution_config",
+            return_value={"resolution": {"enabled": True}},
+        ),
+        patch("app.services.scrape_orchestrator.SourceRegistry.get", return_value=lambda: _mk_scraper(job)),
+        patch.object(DeduplicationService, "filter_batch", new=AsyncMock(side_effect=_pass_through)),
+        patch(
+            "app.services.scrape_orchestrator.DescriptionResolver.resolve_batch",
+            new=AsyncMock(side_effect=_fake_resolve),
+        ),
+    ):
+        result = await orch.run(source_id="adzuna", store=False)
+
+    assert result.descriptions_resolved == 1
+
+
+def _mk_scraper(job):
+    s = MagicMock()
+    s.fetch = AsyncMock(return_value=[object()])
+    s.normalize = MagicMock(return_value=job)
+    return s
+
+
 def test_load_scoring_profile_returns_none_when_no_file_exists(tmp_path, monkeypatch):
     """load_scoring_profile() returns None when neither the .local.yaml
     override NOR the committed scoring-profile.yaml default exists.

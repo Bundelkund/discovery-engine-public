@@ -1,0 +1,9 @@
+# Description-resolution config (Slice B).
+# Backfills thin job descriptions from the posting's origin (ATS / career page)
+# before MinHash + Stage-1 scoring. No secrets here (git-tracked).
+resolution:
+  enabled: true
+  min_description_chars: 200   # Gate: only resolve descriptions shorter than this
+  max_resolve: 100             # Cost ceiling per scrape run
+  concurrency: 5               # Parallel origin fetches
+  timeout_s: 20                # Per-request timeout

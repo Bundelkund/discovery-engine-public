@@ -72,6 +72,11 @@ def load_enrichment_config() -> dict:
 
 
 @lru_cache
+def load_resolution_config() -> dict:
+    return load_yaml("resolution.yaml")
+
+
+@lru_cache
 def load_archetypes_config() -> dict:
     return load_yaml("archetypes.yaml")
 
