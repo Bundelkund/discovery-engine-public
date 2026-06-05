@@ -3,7 +3,17 @@
 # before MinHash + Stage-1 scoring. No secrets here (git-tracked).
 resolution:
   enabled: true
-  min_description_chars: 200   # Gate: only resolve descriptions shorter than this
+  min_description_chars: 200   # Input gate: only resolve descriptions shorter than this
+  min_resolved_chars: 300      # Output gate (A): accept resolved text only if >= this
+                               #   (absolute floor, not just "longer than original").
+                               #   Rejects a 231-char careerjet captcha that beat a thin
+                               #   140-char snippet on length alone.
   max_resolve: 100             # Cost ceiling per scrape run
   concurrency: 5               # Parallel origin fetches
   timeout_s: 20                # Per-request timeout
+  blocked_hosts:               # (B) Tracker/aggregator redirect hosts — click-trackers,
+    - jobviewtrack.com         #   not posting origins. careerjet hands out only these;
+                               #   server-side fetch -> careerjet anti-bot page. Skipped
+                               #   before fetch so they don't burn the max_resolve budget.
+  # block_page_markers: []     # Optional override of built-in anti-bot fingerprints
+                               #   (unusual traffic / kein roboter / captcha / ...).
