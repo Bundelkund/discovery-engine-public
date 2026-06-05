@@ -37,6 +37,12 @@ Realistically **6-8 weeks** of solo full-time work for someone with domain knowl
 
 If you are evaluating Discovery Engine for a multi-tenant use case and want to discuss this, open an issue.
 
+## Recently shipped (single-tenant)
+
+- **Description resolution (Slice B)** — orchestrator step 4a backfills thin descriptions from the posting origin before MinHash + Stage-1 scoring, so metadata-only sources (adzuna/jooble/careerjet) no longer starve keyword matching. Hardened against tracker hosts (`blocked_hosts`) and anti-bot/captcha interstitials via an absolute output-length floor + block-page markers. New `ScrapeResponse.descriptions_resolved` counter; `config/resolution.yaml`. *(50eb117, 56277f2)*
+- **Arbeitsagentur source** — BA Jobsuche-API adapter as the DE-wide master aggregator. *(e9e7f0c)*
+- **Recall source-of-truth** — search terms now regenerated from a single `search-profile.yaml` (lives in the consumer repo) → `config/sources.yaml`, closing the niche-recall + location drift that made jobs like HDI/Hannover unfindable. *(e49aefc)*
+
 ## Smaller open follow-ups (single-tenant)
 
 Tracked in `docs/audits/` audit reports, summarized here:

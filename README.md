@@ -7,16 +7,20 @@ This is an **open-source intake layer**. It is **not** a multi-tenant SaaS — s
 ## What it does
 
 ```
-n8n (cron) ──▶ POST /scrape/{source} ──▶ Dedup ──▶ Stage-1 Score ──▶ Supabase
+n8n (cron) ──▶ POST /scrape/{source} ──▶ Dedup ──▶ Resolve ──▶ Stage-1 Score ──▶ Supabase
                                                                           │
                                        Apply Skill / your tooling ◀───────┘
                                        GET /jobs?keywords_positive=…
                                        GET /companies/{domain}
 ```
 
-- **Sources** (`app/sources/`): Greenhouse, Ashby, Lever, Personio (ATS APIs), Adzuna, RSS, Indeed (jobspy)
+- **Sources** (`app/sources/`):
+  - *ATS APIs* — Greenhouse, Ashby, Lever, Personio, Recruitee, Breezy, Factorial
+  - *Aggregators / job boards* — Adzuna, Jooble, Careerjet, TheMuse, LinkedIn, Indeed (jobspy), Arbeitsagentur (BA Jobsuche-API)
+  - *Feeds* — RSS
+- **Resolution** (`app/resolution/`): backfills thin job descriptions from the posting origin (ATS / career page) before scoring, so metadata-only sources don't starve keyword matching. Skips tracker hosts (`config/resolution.yaml` `blocked_hosts`) and rejects anti-bot / captcha interstitials via an output-quality gate.
 - **Scoring** (`app/scoring/`): one stage — keyword + archetype matching against a *single* configured profile (Stage 2 LLM/embedding scoring was removed; see ROADMAP.md if reintroducing)
-- **Enrichment** (`app/enrichment/`): domain resolution, Hunter.io company data
+- **Enrichment** (`app/enrichment/`): company-domain resolution, Hunter.io company data
 - **Storage**: Supabase (REST only — no direct DB access required by consumers)
 - **Consumer pattern**: REST. Consumers identify themselves via `X-API-Key` (per-consumer key in `config/api-keys.yaml`).
 
@@ -56,7 +60,7 @@ You can absolutely run Discovery Engine without the Apply Skill — just edit `c
 | Method | Path | Scope | Description |
 |--------|------|-------|-------------|
 | GET | `/health` | — | Service health + registered components |
-| POST | `/scrape/{source}` | `scrape:trigger` | Scrape jobs from one source (greenhouse / ashby / lever / personio / rss / indeed / adzuna) |
+| POST | `/scrape/{source}` | `scrape:trigger` | Scrape jobs from one source (greenhouse, ashby, lever, personio, recruitee, breezy, factorial, linkedin, indeed, adzuna, jooble, careerjet, themuse, arbeitsagentur, rss). Live list in `/health.sources`. Response counts include `descriptions_resolved` (jobs backfilled by the resolution step). |
 | POST | `/enrich/{domain}` | `scrape:trigger` | Run enrichment pipeline against one domain |
 | GET | `/jobs` | `jobs:read` | Paginated job list with filters (keywords, location, distance, source, seniority, salary, …) |
 | GET | `/jobs/{id}` | `jobs:read` | Job detail |
@@ -82,6 +86,7 @@ X-API-Key: <APPLY_API_KEY>
 | File | Purpose |
 |---|---|
 | `config/sources.yaml` | Per-source settings (search terms, limits, country) |
+| `config/resolution.yaml` | Description-resolution gates, `blocked_hosts`, anti-bot markers |
 | `config/scoring.yaml` | Scorer weights, thresholds, store-threshold gate |
 | `config/enrichment.yaml` | Enricher pipeline order and dependencies |
 | `config/archetypes.yaml` | Role-archetype catalog (keywords DE/EN) |
