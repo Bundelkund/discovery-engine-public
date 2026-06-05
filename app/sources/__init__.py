@@ -12,3 +12,4 @@ from app.sources import factorial as factorial
 from app.sources import careerjet as careerjet
 from app.sources import jooble as jooble
 from app.sources import themuse as themuse
+from app.sources import arbeitsagentur as arbeitsagentur

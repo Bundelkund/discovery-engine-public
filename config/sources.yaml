@@ -38,6 +38,15 @@ sources:
     location: "Deutschland"
     limit: 50
     search_terms: ["KI Berater", "AI Consultant", "KI Trainer", "Agile Coach", "Transformation Manager", "Dozent KI", "Dozent KI Automatisierung", "AI Educator", "Curriculum Lead", "Senior AI Enablement Manager", "Tutor KI", "Senior Organisationsberater", "Agile Coach OE", "Transformation Manager IT", "Consultant Change Management", "Agile AI Coach", "Referent Datenkompetenz", "Coach Datenkompetenz", "Impact-driven AI Consultant", "Digitalisierungsreferent", "Fellow Agile Transformation", "Tech4Germany"]
+  arbeitsagentur:
+    enabled: true
+    # Bundesagentur Jobsuche-API — public static key (X-API-Key: jobboerse-jobsuche), kein Secret.
+    location: ""   # leer = bundesweit
+    umkreis: 50
+    size: 50
+    detail: true        # per-Job Detail-Call -> stellenangebotsBeschreibung (Volltext)
+    max_detail: 300     # Kosten-Ceiling daily cron
+    search_terms: ["KI Berater", "AI Consultant", "KI Trainer", "Agile Coach", "Transformation Manager", "Dozent KI", "Dozent KI Automatisierung", "AI Educator", "Curriculum Lead", "Senior AI Enablement Manager", "Tutor KI", "Senior Organisationsberater", "Agile Coach OE", "Transformation Manager IT", "Consultant Change Management", "Agile AI Coach", "Referent Datenkompetenz", "Coach Datenkompetenz", "Impact-driven AI Consultant", "Digitalisierungsreferent", "Fellow Agile Transformation", "Tech4Germany"]
   themuse:
     enabled: true
     # api_key via .env (THEMUSE_API_KEY) optional — laeuft auch keyless (rate-limited)
