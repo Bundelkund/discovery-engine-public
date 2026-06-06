@@ -13,6 +13,7 @@ Both stages run scripts/seed_ats_companies.py afterwards to upsert into ats_comp
 """
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -36,6 +37,41 @@ SEEDER = REPO_ROOT / "scripts" / "seed_ats_companies.py"
 STAGE_FLAG = {"revalidate": "--revalidate", "discover": "--no-validate"}
 
 
+def _hydrate_from_db(supabase, ats: str | None) -> dict[str, int]:
+    """Write {ats}-enumeration.json from ats_companies so scanner --revalidate has a
+    slug universe (scripts/out/ is ephemeral in the container; the registry is the SoT).
+
+    Scope = monitor=true (active+paused; dead boards are revived via monthly discover).
+    _load_prior() only needs all_validations[].slug. Returns {ats: slug_count}.
+    """
+    rows: list[dict] = []
+    page = 0
+    while True:
+        q = supabase.table("ats_companies").select("ats,slug").eq("monitor", True)
+        if ats:
+            q = q.eq("ats", ats)
+        res = q.range(page * 1000, page * 1000 + 999).execute()
+        rows.extend(res.data or [])
+        if not res.data or len(res.data) < 1000:
+            break
+        page += 1
+
+    by_ats: dict[str, list[str]] = {}
+    for r in rows:
+        by_ats.setdefault(r["ats"], []).append(r["slug"])
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    counts: dict[str, int] = {}
+    for a, slugs in by_ats.items():
+        path = OUT_DIR / f"{a}-enumeration.json"
+        path.write_text(json.dumps({
+            "ats": a, "crawls": [], "candidates": [],
+            "all_validations": [{"slug": s} for s in slugs],
+        }), encoding="utf-8")
+        counts[a] = len(slugs)
+    return counts
+
+
 def _run(stage: str, run_id: str, ats: str | None = None, limit: int | None = None) -> None:
     """Background worker: run scanner then seeder, update the ats_scan_runs row.
 
@@ -55,6 +91,14 @@ def _run(stage: str, run_id: str, ats: str | None = None, limit: int | None = No
         scope += ["--limit", str(limit)]
     try:
         with open(log_path, "w", encoding="utf-8") as log:
+            # Stage B (revalidate) needs a prior slug universe on disk; hydrate it from
+            # the registry (out/ is ephemeral in prod). Stage A (discover) CDX-enumerates
+            # fresh and needs no prior.
+            if stage == "revalidate":
+                hydrated = _hydrate_from_db(supabase, ats)
+                stats["hydrated"] = hydrated
+                log.write(f"--- hydrated from ats_companies: {hydrated} ---\n")
+                log.flush()
             scan = subprocess.run(
                 [sys.executable, str(SCANNER), *scope, STAGE_FLAG[stage]],
                 cwd=str(REPO_ROOT), stdout=log, stderr=subprocess.STDOUT, text=True,
