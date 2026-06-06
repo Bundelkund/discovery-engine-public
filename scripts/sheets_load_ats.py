@@ -47,6 +47,14 @@ def add_tab(sid: str, title: str) -> None:
         print(f"  addSheet {title}: rc={rc} {out[:120]}", file=sys.stderr)
 
 
+def clear(sid: str, rng: str) -> None:
+    """Wipe a range so reload is idempotent (no duplicate rows on re-run)."""
+    rc, out = gws("sheets", "spreadsheets", "values", "clear",
+                  "--params", json.dumps({"spreadsheetId": sid, "range": rng}))
+    if rc != 0 and "Unable to parse range" not in out:
+        print(f"  clear {rng}: rc={rc} {out[:120]}", file=sys.stderr)
+
+
 def put(sid: str, rng: str, values: list, how: str) -> bool:
     """how = 'update' (range-anchored) or 'append' (auto-extend)."""
     params = {"spreadsheetId": sid, "range": rng, "valueInputOption": "USER_ENTERED"}
@@ -82,6 +90,7 @@ def load(sid: str, ats: str) -> None:
     rows = rows_for(ats)
     print(f"{ats}: {len(rows)} rows", file=sys.stderr)
     add_tab(sid, ats)
+    clear(sid, f"{ats}!A:Z")                            # idempotent: wipe prior load
     put(sid, f"{ats}!A1", [HEADER], "update")          # header
     for i in range(0, len(rows), CHUNK):
         chunk = rows[i:i + CHUNK]

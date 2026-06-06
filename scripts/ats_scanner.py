@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -75,7 +76,8 @@ PROVIDERS: dict[str, dict] = {
     "factorial": {
         "cdx_domains": ["factorialhr.com", "factorialhr.de", "factorialhr.es"],
         "mode": "subdomain", "suffix": ".factorialhr.com",
-        "feed": "https://{slug}.factorialhr.com/job_posting", "kind": "head-200",
+        # no public JSON API; sitemap.xml lists every /job_posting/ URL (bot-friendly 200)
+        "feed": "https://{slug}.factorialhr.com/sitemap.xml", "kind": "sitemap:/job_posting/",
     },
     "greenhouse": {
         "cdx_domains": ["boards.greenhouse.io", "job-boards.greenhouse.io"],
@@ -243,9 +245,24 @@ def validate_feed(slug, prov, client, retries=3):
     return out
 
 
+def _humanize_loc(loc: str) -> str:
+    seg = loc.rstrip("/").split("/")[-1]
+    seg = re.sub(r"-\d+$", "", seg)  # drop trailing numeric job id (-243314)
+    return seg.replace("-", " ").strip().title()
+
+
 def _parse_feed(resp, kind, out):
     if kind == "head-200":
         out["active"] = True
+        return out
+    if kind.startswith("sitemap:"):
+        frag = kind.split(":", 1)[1]
+        locs = re.findall(r"<loc>\s*([^<]+?)\s*</loc>", resp.text)
+        jobs = [l for l in locs if frag in l]
+        if not jobs:
+            out["error"] = "no job_posting locs"; return out
+        out.update(active=True, job_count=len(jobs),
+                   sample_titles=[_humanize_loc(j) for j in jobs[:3]])
         return out
     if kind == "xml-position":
         if "<position" not in resp.text:
@@ -318,12 +335,31 @@ def write_outputs(ats, report, candidates):
     return json_path, yaml_path
 
 
+def _load_prior(ats):
+    """Reload a prior enumeration's slugs+crawls from {ats}-enumeration.json."""
+    path = OUT_DIR / f"{ats}-enumeration.json"
+    if not path.exists():
+        raise FileNotFoundError(f"{path} — run enumeration first (no --revalidate)")
+    rep = json.loads(path.read_text(encoding="utf-8"))
+    # candidates carry per-slug `crawls`; all_validations does not. Source the slug
+    # universe from all_validations (covers inactive too) but keep crawl sets from candidates.
+    crawls_by_slug = {c["slug"]: set(c.get("crawls", [])) for c in rep.get("candidates", [])}
+    universe = rep.get("all_validations") or rep.get("candidates", [])
+    seen = {v["slug"]: crawls_by_slug.get(v["slug"], set()) for v in universe}
+    return seen, rep.get("crawls", [])
+
+
 def scan(ats, args, client):
     prov = PROVIDERS[ats]
     print(f"\n=== {ats} ({prov['mode']}) ===", file=sys.stderr)
-    crawls = latest_crawls(args.crawls, client)
-    seen, truncated = enumerate_slugs(prov, crawls, client, retries=args.retries,
-                                      max_pages=args.max_pages)
+    if args.revalidate:
+        seen, crawls = _load_prior(ats)
+        truncated = False
+        print(f"  revalidate: {len(seen)} prior slugs (no CDX)", file=sys.stderr)
+    else:
+        crawls = latest_crawls(args.crawls, client)
+        seen, truncated = enumerate_slugs(prov, crawls, client, retries=args.retries,
+                                          max_pages=args.max_pages)
     all_slugs = sorted(seen)
     print(f"  -> {len(all_slugs)} distinct slugs", file=sys.stderr)
     if args.limit:
@@ -366,12 +402,16 @@ def main() -> int:
     ap.add_argument("--limit", type=int, default=0, help="cap slugs before validate (0=all)")
     ap.add_argument("--workers", type=int, default=12, help="parallel feed probes")
     ap.add_argument("--no-validate", action="store_true", help="CDX slugs only, skip feeds")
+    ap.add_argument("--revalidate", action="store_true",
+                    help="skip CDX, re-probe feeds of prior {ats}-enumeration.json")
     ap.add_argument("--retries", type=int, default=5, help="CDX retries on 5xx/timeout")
     ap.add_argument("--max-pages", type=int, default=0, help="cap CDX pages per crawl (0=all)")
     args = ap.parse_args()
 
     if not args.ats and not args.all:
         ap.error("pass --ats <name> or --all")
+    if args.revalidate and args.no_validate:
+        ap.error("--revalidate and --no-validate are mutually exclusive")
     targets = sorted(PROVIDERS) if args.all else [args.ats]
 
     summary = []
