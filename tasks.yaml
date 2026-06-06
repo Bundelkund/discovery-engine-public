@@ -30,10 +30,14 @@ epics:
         - lever         # jobs.lever.co — robots.txt disallows crawl; CC has only robots.txt, 0 company pages
       lever_strategy: >
         Feed api.lever.co/v0/postings/{slug} works once slug known — enumeration is the
-        only blocker. Slugs accrete downstream: harvest jobs.lever.co/{slug} apply-links
-        from jobs found via OTHER sources + curated yaml. source='scrape'|'manual', never
-        'cc'. CC WAT link-graph mining = P3 option (heavy). validate_feed already emits
-        de_flag for lever via categories.location.
+        only blocker (robots-blocked, 0 CC company pages). validate_feed already emits
+        de_flag for lever. DECISION PENDING — three options, never source='cc':
+        (1) ACCRETE [recommended, low-effort]: harvest jobs.lever.co/{slug} apply-links
+            from jobs found via OTHER sources -> insert source='scrape'. Self-filling, no build.
+        (2) CURATED yaml: known DE lever boards in config/lever-candidates.yaml ->
+            seed source='manual'. ~5min, for a named target set. (file does not exist yet.)
+        (3) WAT link-graph mining [P3, heavy]: grep CC WAT outlinks for jobs.lever.co/{slug}.
+        Pick (1) as default + (2) when concrete lever targets exist; (3) only if broad coverage critical.
       pipeline_currency: >
         Two cadences, no-delete (docs/ats-pipeline.md): Stage A discover (monthly, CC CDX
         --no-validate -> new slugs) + Stage B refresh (daily/weekly, --revalidate -> active/
@@ -130,7 +134,7 @@ tasks:
     title: slug-Scraper lesen aktive Slugs aus ats_companies (Tabelle = SoT)
     status: backlog
     priority: P2
-    depends_on: [registry-table]
+    depends_on: [registry-table, storage-gate]   # T6 vor T5: erst Title-Gate, sonst jobs-Flut bei 5915 Boards
     detail: >
       slug-basierte Scraper lesen Slugs aus ats_companies (status='active' AND
       monitor=true), Union mit portals.yaml. try/except -> yaml-only bei DB-Fehler
@@ -152,12 +156,28 @@ tasks:
       Profil geladen -> alle emittieren (Demo unveraendert). Pure fn + Unit-Test.
     acceptance: "test_title_gate: 'Agile Coach'->keep+priority, 'KI Trainer'->keep, 'Vertriebsmitarbeiter'/'Heizungsmonteur'->drop."
 
+  - id: ats-new-providers
+    epic: ats-registry
+    title: Neue ATS CC-Verify (Softgarden, Teamtailor, Concludis/d.vinci/rexx/onlyfy)
+    status: backlog
+    priority: P2
+    depends_on: [ats-scanner]
+    detail: >
+      Folgetask zu ats-enum-matrix (dort als STILL OPEN markiert). Je Kandidat:
+      CDX-Prefix-Test (CC-enumerierbar? custom-domain -> raus) + Feed-Endpoint-Probe,
+      dann Provider in PROVIDERS-Registry (ats_scanner.py) eintragen. Reihenfolge:
+      Softgarden ({slug}.career.softgarden.de, Jobs-API dev.softgarden.de, DE, P1) zuerst,
+      dann Teamtailor ({slug}.teamtailor.com RSS/API). Concludis/d.vinci/rexx/onlyfy
+      (Prescreen) wahrscheinlich per-customer custom domains -> CDX-Test entscheidet.
+      Output: docs/ats-enumerability.md erweitern (active/raw + de_flag je neuem Provider).
+    acceptance: "Softgarden in PROVIDERS, --ats softgarden liefert active feeds + de_flag; Matrix-Doku erweitert; custom-domain-Kandidaten als nicht-enumerierbar dokumentiert."
+
   - id: softgarden-source
     epic: ats-registry
     title: Softgarden-Scraper (neue Source via Jobs-API)
     status: backlog
     priority: P2
-    depends_on: [ats-scanner, ats-enum-matrix]
+    depends_on: [ats-new-providers, db-driven-slugs]   # braucht Softgarden-CDX-Verify + DB-Slugs
     detail: >
       Neuer Scraper @SourceRegistry.register("softgarden"), BaseScraper. Slugs aus
       ats_companies (db-driven-slugs). Jobs-API dev.softgarden.de je Slug ->
