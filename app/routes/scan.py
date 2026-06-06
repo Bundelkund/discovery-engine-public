@@ -76,7 +76,9 @@ def _run(stage: str, run_id: str, ats: str | None = None, limit: int | None = No
             lines = [ln for ln in (seed.stdout or "").splitlines() if ln.strip()]
             stats["seed_summary"] = lines[-1] if lines else ""
             if seed.returncode != 0:
-                raise RuntimeError(f"seeder exited {seed.returncode}: {stats['seed_summary']}")
+                err_tail = (seed.stderr or "").strip()[-800:] or stats["seed_summary"]
+                stats["seed_stderr_tail"] = err_tail
+                raise RuntimeError(f"seeder exited {seed.returncode}: {err_tail}")
 
         supabase.table("ats_scan_runs").update(
             {"status": "done", "finished_at": datetime.now(timezone.utc).isoformat(),
