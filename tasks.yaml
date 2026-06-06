@@ -18,14 +18,16 @@ epics:
     notes:
       cc_enumerable_existing_sources:
         # slug-basierte shared-host ATS — schon Source, aber nur curated yaml-Slugs;
-        # CC-Scan wuerde sie massiv erweitern.
-        - personio      # {slug}.jobs.personio.de/xml        (done)
-        - factorial     # {slug}.factorialhr.{tld}/sitemap.xml
-        - recruitee     # {slug}.recruitee.com/api/offers
-        - greenhouse    # boards.greenhouse.io/{slug}
-        - lever         # jobs.lever.co/{slug}
-        - ashby         # jobs.ashbyhq.com/{slug}
-        - breezy        # {slug}.breezy.hr/json
+        # CC-Scan wuerde sie massiv erweitern. Counts = ats_scanner.py first-pass
+        # (2 crawls, raw unvalidated) -> docs/ats-enumerability.md.
+        - personio      # {slug}.jobs.personio.de/xml  — 1018 (DE-TLD)  (validated done: 495)
+        - greenhouse    # boards/job-boards.greenhouse.io/{slug} — 2785 (global)
+        - ashby         # jobs.ashbyhq.com/{slug} — 1714 (global)
+        - breezy        # {slug}.breezy.hr/json — 1289 (global, feed 403 to bots)
+        - recruitee     # {slug}.recruitee.com/api/offers — 1286 (global)
+        - factorial     # {slug}.factorialhr.com — 222 (.com only; add .de/.es)
+      not_cc_enumerable_robots_blocked:
+        - lever         # jobs.lever.co — robots.txt disallows crawl; CC has only robots.txt, 0 company pages
       not_cc_enumerable_query_apis:
         # kein per-company Slug zum Enumerieren — Query/Aggregator-APIs.
         - adzuna
