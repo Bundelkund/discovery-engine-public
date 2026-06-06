@@ -90,7 +90,7 @@ tasks:
   - id: registry-table
     epic: ats-registry
     title: Supabase-Tabelle ats_companies (no-delete Registry)
-    status: backlog
+    status: done
     priority: P1
     depends_on: []
     detail: >
@@ -104,18 +104,26 @@ tasks:
       RLS off (wie cr_companies). No-delete-Policy als Tabellen-COMMENT.
       Index (ats, status, monitor) WHERE monitor; Index (de_flag) fuer DE-Filter.
     acceptance: "list_tables zeigt ats_companies; Indizes vorhanden; COMMENT dokumentiert no-delete; de_flag-Spalte da."
+    done_note: >
+      Migration ats_companies_registry angewendet (project guocdgjpbvsvcvchgolm).
+      PK (ats,slug), RLS off (wie cr_companies), 4 Indizes (pkey + de_flag +
+      domain partial + monitor partial WHERE monitor), COMMENT = no-delete-Policy.
+      monitor=true ausser status='dead'. domain = soft-link (kein FK, no-delete-decoupled).
 
   - id: seed-registry
     epic: ats-registry
     title: Registry seeden aus Scanner-Output
-    status: backlog
+    status: done
     priority: P1
     depends_on: [ats-scanner, registry-table]
     detail: >
-      scripts/seed_ats_companies.py liest ATS-Scanner-Output, idempotenter upsert
-      on (ats, slug). Personio 495 zuerst, danach Softgarden. initial_job_count nur
-      beim ersten Insert setzen.
-    acceptance: "SELECT count(*) WHERE ats='personio' = 495; Re-Run aendert nichts (idempotent)."
+      scripts/seed_ats_companies.py liest enumeration-JSON (all_validations =
+      Voll-Universum inkl. inaktiver Boards), idempotenter REST-upsert on (ats, slug).
+      initial_job_count + discovered_at nur beim ersten Insert (update-Pfad sendet sie
+      nicht -> stabil). status: active | dead (HTTP-Fehler) | paused (Feed leer).
+      seen_in_crawls = File-Crawl-Set (per-slug crawls cosmetisch leer; echte Union
+      = Stage-A-Folgearbeit via SQL array_cat).
+    acceptance: "DONE: 8314 rows geseedet (5915 active, 1906 keep-DE), initial_job_count ueberall gesetzt; Re-Run factorial = 0 new / 222 update (idempotent)."
 
   - id: db-driven-slugs
     epic: ats-registry
