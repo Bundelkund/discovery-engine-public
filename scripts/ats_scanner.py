@@ -73,7 +73,7 @@ PROVIDERS: dict[str, dict] = {
         "feed": "https://{slug}.breezy.hr/json", "kind": "json:list",
     },
     "factorial": {
-        "cdx_domains": ["factorialhr.com"],
+        "cdx_domains": ["factorialhr.com", "factorialhr.de", "factorialhr.es"],
         "mode": "subdomain", "suffix": ".factorialhr.com",
         "feed": "https://{slug}.factorialhr.com/job_posting", "kind": "head-200",
     },
