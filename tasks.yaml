@@ -168,14 +168,24 @@ tasks:
   - id: cc-recheck-cron
     epic: ats-registry
     title: Periodischer CC-Recheck (neue Firmen ergaenzen, nie loeschen)
-    status: backlog
+    status: done
     priority: P2
     depends_on: [ats-scanner, seed-registry]
     detail: >
-      Geplanter ATS-Scanner-Lauf ueber alle Provider -> upsert neuer Firmen in
-      ats_companies. NIE delete: toter Feed -> status='dead', Zeile bleibt; neuer
-      Slug -> insert. Trigger via n8n cron oder Task Scheduler. ROADMAP-Doku.
-    acceptance: "Recheck-Lauf fuegt neue Slugs hinzu, markiert tote als 'dead', loescht keine Zeile."
+      HTTP-Endpoint POST /scan/{stage} (app/routes/scan.py): startet ats_scanner +
+      seed_ats_companies als BackgroundTask-Subprocess, 202+run_id sofort, Status in
+      ats_scan_runs (GET /scan/runs). 409 wenn Lauf der stage schon laeuft (kein
+      CC-Overlap). stage revalidate=Stage B (--revalidate), discover=Stage A
+      (--no-validate). Optional ?ats=&limit= fuer gezielte Reruns. Consumer 'n8n'
+      (api-keys.yaml, N8N_API_KEY). Getriggert via n8n cron (2 WFs, inaktiv bis
+      Coolify-Key+Health gruen). NIE delete: toter Feed -> status='dead'.
+    done_note: >
+      Migration ats_scan_runs live (MCP). n8n WFs: Stage B daily BFfKQKCRB8F6jt4V
+      (17 4 * * *), Stage A monthly nMGEo1gpoCDSmtQB (23 4 1 * *) -> POST
+      discovery-engine.konektos.de/scan/{revalidate,discover}. Lokal runtime-getestet
+      (401/404/409/done+seed_summary/log). OFFEN (User): N8N_API_KEY in Coolify-Env
+      setzen + redeploy, Prod-/health gruen, dann WFs aktivieren.
+    acceptance: "DONE: Endpoint+Tabelle+2 n8n-WFs. Aktivierung nach Coolify-Key (User-Schritt)."
 
   - id: progressive-enrichment
     epic: ats-registry

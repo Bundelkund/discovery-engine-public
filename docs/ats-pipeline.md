@@ -22,11 +22,25 @@ Neither stage deletes. A only inserts new slugs; B flips `active`/sets `status='
 
 ## How it is triggered
 
-- **Now (manual):** run the commands above. B + C are a 2-liner re-runnable any time.
-- **Scheduled (T8):** Windows Task Scheduler or n8n cron —
-  - daily → Stage B (`--revalidate --all`) + Stage C (Sheet reload / registry upsert)
-  - monthly → Stage A (`--no-validate --all`) to pull the new CC crawl, then B
-- The repo already runs scheduled jobs (`.claude/routines/`, Task Scheduler). Same pattern: a routine invoking `python scripts/ats_scanner.py --all --revalidate` then the seed/upsert step.
+**Live (T8):** n8n cron → HTTP → discovery-engine endpoint `POST /scan/{stage}`
+(`app/routes/scan.py`). The endpoint runs `ats_scanner.py` + `seed_ats_companies.py`
+as a BackgroundTask subprocess and returns `202 {run_id}` immediately (scan takes
+minutes); status + audit land in `public.ats_scan_runs` (`GET /scan/runs`). One run
+per stage at a time → `409` otherwise (no CC overlap).
+
+| n8n workflow | id | schedule | calls |
+|--------------|----|----------|-------|
+| Discovery Engine — ATS Refresh (Stage B daily) | `BFfKQKCRB8F6jt4V` | `17 4 * * *` | `POST https://discovery-engine.konektos.de/scan/revalidate` |
+| Discovery Engine — ATS Discover (Stage A monthly) | `nMGEo1gpoCDSmtQB` | `23 4 1 * *` | `POST …/scan/discover` |
+
+- Auth: header `X-API-Key` = `N8N_API_KEY` (consumer `n8n` in `config/api-keys.yaml`,
+  scopes `scrape:trigger,jobs:read`). Key lives in **Coolify Env** (app helpful-hyena),
+  not the gitignored `.env`.
+- Optional `?ats=&limit=` narrow scope (targeted reruns / testing); n8n passes neither → full `--all`.
+- **Manual:** run `ats_scanner.py --all --revalidate` then `seed_ats_companies.py`, or
+  hit the endpoint directly. Both workflows also carry a Manual Trigger.
+- **Activation gate:** workflows ship **inactive**. Activate only after `N8N_API_KEY` is
+  set in Coolify, redeployed, and `curl https://discovery-engine.konektos.de/health` is green.
 
 ## Provider enumerability
 
