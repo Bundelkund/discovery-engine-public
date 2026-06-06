@@ -28,7 +28,8 @@ CAREERS = {
     "personio":   "https://{slug}.jobs.personio.de",
     "lever":      "https://jobs.lever.co/{slug}",
 }
-HEADER = ["slug", "careers_url", "feed_url", "crawls_seen", "active", "job_count", "sample_titles"]
+HEADER = ["slug", "careers_url", "feed_url", "crawls_seen", "active", "job_count",
+          "de_flag", "sample_titles"]
 
 
 def gws(*args: str, body: str | None = None) -> tuple[int, str]:
@@ -80,6 +81,7 @@ def rows_for(ats: str) -> list[list]:
             len(c.get("crawls", [])),
             "" if c.get("active") is None else c.get("active"),
             c.get("job_count") if c.get("job_count") is not None else "",
+            c.get("de_flag") or "",
             "; ".join(t for t in c.get("sample_titles", []) if t)[:200],
         ])
     rows.sort(key=lambda r: r[0])

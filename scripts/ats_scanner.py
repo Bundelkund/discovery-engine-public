@@ -62,38 +62,44 @@ PROVIDERS: dict[str, dict] = {
         "cdx_domains": ["jobs.personio.de"],
         "mode": "subdomain", "suffix": ".jobs.personio.de",
         "feed": "https://{slug}.jobs.personio.de/xml", "kind": "xml-position",
+        "loc": "personio",
     },
     "recruitee": {
         "cdx_domains": ["recruitee.com"],
         "mode": "subdomain", "suffix": ".recruitee.com",
         "feed": "https://{slug}.recruitee.com/api/offers/", "kind": "json:offers",
+        "loc": "recruitee",  # ISO country_code (exact)
     },
     "breezy": {
         "cdx_domains": ["breezy.hr"],
         "mode": "subdomain", "suffix": ".breezy.hr",
         "feed": "https://{slug}.breezy.hr/json", "kind": "json:list",
+        "loc": "breezy",  # ISO country.id (exact)
     },
     "factorial": {
         "cdx_domains": ["factorialhr.com", "factorialhr.de", "factorialhr.es"],
         "mode": "subdomain", "suffix": ".factorialhr.com",
         # no public JSON API; sitemap.xml lists every /job_posting/ URL (bot-friendly 200)
         "feed": "https://{slug}.factorialhr.com/sitemap.xml", "kind": "sitemap:/job_posting/",
+        "loc": None,  # sitemap carries no location -> de_flag stays unknown via feed
     },
     "greenhouse": {
         "cdx_domains": ["boards.greenhouse.io", "job-boards.greenhouse.io"],
         "mode": "path", "skip": {"embed", "api"},
         "feed": "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
-        "kind": "json:jobs",
+        "kind": "json:jobs", "loc": "greenhouse",  # free-string location.name
     },
     "lever": {
         "cdx_domains": ["jobs.lever.co"],
         "mode": "path", "skip": set(),
         "feed": "https://api.lever.co/v0/postings/{slug}?mode=json", "kind": "json:list",
+        "loc": "lever",  # not CC-enumerable (robots); slugs accrete downstream
     },
     "ashby": {
         "cdx_domains": ["jobs.ashbyhq.com"],
         "mode": "path", "skip": {"api", "embed"},
         "feed": "https://api.ashbyhq.com/posting-api/job-board/{slug}", "kind": "json:jobs",
+        "loc": "ashby",  # free-string location + secondaryLocations + workplaceType
     },
 }
 
@@ -218,13 +224,104 @@ def enumerate_slugs(prov, crawls, client, page_size=10000, retries=5, max_pages=
 
 
 # --------------------------------------------------------------------------- #
+# DE classification — derived in the same pass as validation (no extra fetch).
+#   de_flag per board, folded from its jobs' locations:
+#     "de"      >=1 job located in Germany (ISO "DE" or DE city / Germany / Deutschland)
+#     "remote"  no DE job, but >=1 countryless-remote job (could be DE — bias to include)
+#     "foreign" every job has a non-DE location
+#     None      provider exposes no location in its feed (factorial sitemap)
+#   keep-for-DE registry = de ∪ remote.  ISO providers (recruitee, breezy) are exact;
+#   free-string providers (greenhouse, ashby, personio) match a DE-city/Germany list and
+#   never bare ", DE" (that is US-Delaware).
+# --------------------------------------------------------------------------- #
+_DE_CITY = (r"berlin|m[uü]nchen|munich|hamburg|k[oö]ln|cologne|frankfurt|stuttgart|"
+            r"d[uü]sseldorf|dusseldorf|leipzig|dortmund|essen|bremen|dresden|hannover|"
+            r"hanover|n[uü]rnberg|nuremberg|duisburg|bochum|wuppertal|bielefeld|bonn|"
+            r"m[uü]nster|karlsruhe|mannheim|augsburg|wiesbaden|gelsenkirchen|aachen|"
+            r"braunschweig|kiel|freiburg|heidelberg|mainz|erfurt|rostock|kassel|potsdam|"
+            r"saarbr[uü]cken|ulm|regensburg|w[uü]rzburg|ingolstadt|heilbronn|darmstadt|"
+            r"oldenburg|osnabr[uü]ck|wolfsburg|paderborn|leverkusen|jena|walldorf")
+_DE_STR = re.compile(r"\b(germany|deutschland|" + _DE_CITY + r")\b", re.IGNORECASE)
+_REMOTE_RE = re.compile(r"\bremote\b|\banywhere\b|\bdistributed\b|work from home|\bwfh\b", re.I)
+_NONDE_PLACE = re.compile(
+    r"\b(usa?|united states|u\.s|canada|uk|united kingdom|india|ireland|romania|latam|apac|"
+    r"poland|netherlands|france|spain|portugal|italy|brazil|mexico|australia|singapore|"
+    r"philippines|costa rica|colombia|argentina|south africa|denmark|sweden|norway|finland|"
+    r"belgium|austria|switzerland|czech|ukraine|turkey|egypt|kenya|nigeria|israel|uae|dubai|"
+    r"japan|china|korea|vietnam|indonesia|malaysia|thailand|new york|california|texas)\b"
+    r"|,\s*[a-z]{2}\b", re.I)
+
+
+def _cat_str(blob: str) -> str:
+    if _DE_STR.search(blob):
+        return "de"
+    if _REMOTE_RE.search(blob):
+        return "foreign" if _NONDE_PLACE.search(blob) else "remote"
+    return "foreign"
+
+
+def _fold(cats) -> str | None:
+    cats = list(cats)
+    if not cats:
+        return None
+    if "de" in cats:
+        return "de"
+    if "remote" in cats:
+        return "remote"
+    return "foreign"
+
+
+def _de_flag(loc_kind, resp):
+    """Provider-specific location extraction over an already-fetched feed -> de_flag."""
+    try:
+        if loc_kind in ("greenhouse",):
+            return _fold(_cat_str((j.get("location") or {}).get("name") or "")
+                         for j in resp.json().get("jobs", []))
+        if loc_kind == "ashby":
+            cats = []
+            for j in resp.json().get("jobs", []):
+                blob = " ".join([j.get("location") or "",
+                                 json.dumps(j.get("secondaryLocations") or []),
+                                 json.dumps(j.get("address") or {})])
+                if j.get("isRemote") or j.get("workplaceType") == "Remote":
+                    blob += " remote"
+                cats.append(_cat_str(blob))
+            return _fold(cats)
+        if loc_kind == "recruitee":
+            cats = []
+            for o in resp.json().get("offers", []):
+                cc = (o.get("country_code") or "").upper()
+                cats.append("de" if cc == "DE" else "foreign" if cc
+                            else "remote" if o.get("remote") else "foreign")
+            return _fold(cats)
+        if loc_kind == "breezy":
+            cats = []
+            for p in resp.json():
+                for loc in [p.get("location")] + (p.get("locations") or []):
+                    loc = loc or {}
+                    cc = ((loc.get("country") or {}).get("id") or "").upper()
+                    cats.append("de" if cc == "DE" else "foreign" if cc
+                                else "remote" if loc.get("is_remote") else "foreign")
+            return _fold(cats)
+        if loc_kind == "lever":
+            return _fold(_cat_str((j.get("categories") or {}).get("location") or "")
+                         for j in resp.json() if isinstance(j, dict))
+        if loc_kind == "personio":
+            return _fold(_cat_str(p.findtext("office") or "")
+                         for p in ET.fromstring(resp.text).findall("position"))
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Step 2: feed validation
 # --------------------------------------------------------------------------- #
 def validate_feed(slug, prov, client, retries=3):
     url = prov["feed"].format(slug=slug)
     kind = prov["kind"]
     out = {"slug": slug, "feed_url": url, "active": False, "job_count": 0,
-           "sample_titles": [], "error": None}
+           "sample_titles": [], "de_flag": None, "error": None}
     delay = 2.0
     for attempt in range(1, retries + 1):
         try:
@@ -237,7 +334,10 @@ def validate_feed(slug, prov, client, retries=3):
             if resp.status_code != 200:
                 out["error"] = f"HTTP {resp.status_code}"
                 return out
-            return _parse_feed(resp, kind, out)
+            _parse_feed(resp, kind, out)
+            if out["active"] and prov.get("loc"):
+                out["de_flag"] = _de_flag(prov["loc"], resp)
+            return out
         except ET.ParseError as e:
             out["error"] = f"xml parse: {e}"; return out
         except Exception as e:  # noqa: BLE001
@@ -367,7 +467,7 @@ def scan(ats, args, client):
 
     if args.no_validate:
         validations = [{"slug": s, "active": None, "job_count": None,
-                        "sample_titles": [], "error": "not validated",
+                        "sample_titles": [], "de_flag": None, "error": "not validated",
                         "feed_url": prov["feed"].format(slug=s)} for s in all_slugs]
         active = []
     else:
@@ -378,17 +478,27 @@ def scan(ats, args, client):
     by_slug = {v["slug"]: v for v in validations}
     candidates = [{**by_slug[s], "crawls": sorted(seen.get(s, []))} for s in all_slugs
                   if args.no_validate or by_slug[s]["active"]]
+    de_counts = {"de": 0, "remote": 0, "foreign": 0}
+    for v in active:
+        if v.get("de_flag") in de_counts:
+            de_counts[v["de_flag"]] += 1
     report = {
         "ats": ats, "generated_at": datetime.now(timezone.utc).isoformat(),
         "crawls": crawls, "cdx_domains": prov["cdx_domains"],
         "total_slugs_seen": len(seen), "validated": (not args.no_validate),
         "truncated": truncated,
         "active_feeds": len(active) if not args.no_validate else None,
+        "de_counts": de_counts if not args.no_validate else None,
         "candidates": candidates, "all_validations": validations,
     }
     jp, _ = write_outputs(ats, report, candidates)
     tag = "TRUNCATED " if truncated else ""
-    av = f" active={len(active)}" if not args.no_validate else ""
+    if args.no_validate:
+        av = ""
+    else:
+        keep = de_counts["de"] + de_counts["remote"]
+        av = (f" active={len(active)} de={de_counts['de']} remote-nc={de_counts['remote']} "
+              f"keep={keep} foreign={de_counts['foreign']}")
     print(f"  {tag}slugs={len(seen)}{av}  -> {jp.name}", file=sys.stderr)
     return report
 

@@ -28,6 +28,17 @@ epics:
         - factorial     # {slug}.factorialhr.com — 222 (.com only; add .de/.es)
       not_cc_enumerable_robots_blocked:
         - lever         # jobs.lever.co — robots.txt disallows crawl; CC has only robots.txt, 0 company pages
+      lever_strategy: >
+        Feed api.lever.co/v0/postings/{slug} works once slug known — enumeration is the
+        only blocker. Slugs accrete downstream: harvest jobs.lever.co/{slug} apply-links
+        from jobs found via OTHER sources + curated yaml. source='scrape'|'manual', never
+        'cc'. CC WAT link-graph mining = P3 option (heavy). validate_feed already emits
+        de_flag for lever via categories.location.
+      pipeline_currency: >
+        Two cadences, no-delete (docs/ats-pipeline.md): Stage A discover (monthly, CC CDX
+        --no-validate -> new slugs) + Stage B refresh (daily/weekly, --revalidate -> active/
+        job_count/sample_titles/de_flag in ONE fetch). de_flag in {de,remote,foreign,null};
+        keep-for-DE = de∪remote. Trigger: Task Scheduler / n8n cron (.claude/routines/).
       not_cc_enumerable_query_apis:
         # kein per-company Slug zum Enumerieren — Query/Aggregator-APIs.
         - adzuna
@@ -49,31 +60,32 @@ tasks:
   - id: ats-scanner
     epic: ats-registry
     title: Generalisierter ATS-Scanner (provider-pluggbar) aus enumerate_personio.py
-    status: backlog
+    status: done
     priority: P1
     depends_on: []
     detail: >
-      enumerate_personio.py -> provider-pluggbarer ATS-Scanner (app/scanner/ oder
-      scripts/ats_scanner.py). Provider-Registry je ATS: domain, slug_extractor,
-      feed_url_template, feed_validator. Ablauf: CC-CDX-Prefix-Search -> Slugs ->
-      Feed-Validate (200 + parsebar). Personio = Reference-Provider, Verhalten/Output
-      erhalten. Weitere Provider fuer alle slug-ATS (A-Liste) + neue (Softgarden ...)
-      hinzufuegbar. scripts/enumerate_personio.py bleibt erhalten (Thin-Wrapper).
-    acceptance: "ats_scanner --ats personio reproduziert die 495 Boards; enumerate_personio.py unangetastet lauffaehig."
+      scripts/ats_scanner.py — provider-pluggbar (PROVIDERS registry: cdx_domains,
+      mode, feed, kind, loc). Ablauf: CC-CDX-Prefix-Search -> Slugs -> Feed-Validate
+      (200 + parsebar) -> de_flag im SELBEN Fetch (loc-extractor je Provider, keine
+      2. Pass). 7 Provider, 6 CC-enumerierbar (lever robots). enumerate_personio.py
+      unangetastet. Feed-Fixes: breezy /json (403 war stale), factorial sitemap.xml
+      (kein JSON-API). --revalidate = Feed-Re-Probe ohne CDX (Stage-B-Primitive).
+    acceptance: "DONE: --ats personio reproduziert Boards; --revalidate --all liefert active+de_flag in 1 Pass; enumerate_personio.py lauffaehig."
 
   - id: ats-enum-matrix
     epic: ats-registry
     title: CC-Enumerierbarkeit + Feed-Endpoint je ATS verifizieren
-    status: backlog
+    status: done
     priority: P1
     depends_on: []
     detail: >
-      Pro Provider CDX-Prefix-Test + Feed-Probe. Bestaetigt: A-Liste (personio,
-      factorial, recruitee, greenhouse, lever, ashby, breezy) + Softgarden + Teamtailor.
-      Verify: Concludis, d.vinci, rexx, onlyfy/Prescreen — falls custom-domain pro
-      Kunde => nicht CC-enumerierbar => raus. Output docs/ats-enumerability.md (Matrix
-      + Feed-Endpoints + DE-Relevanz).
-    acceptance: "docs/ats-enumerability.md mit verifizierter Matrix; jeder 'verify'-Eintrag entschieden."
+      A-Liste verifiziert + feed-validiert: ~8300 raw -> 5888 active (greenhouse 2045,
+      ashby 1411, recruitee 875, personio 660, breezy 756, factorial 141, lever 0).
+      DE-Klassifikation: 1180 de + 744 remote-nc = 1924 keep, 3948 foreign.
+      Matrix + Feed-Endpoints in docs/ats-enumerability.md, Currency in
+      docs/ats-pipeline.md. STILL OPEN (eigener Task ats-new-providers): Softgarden,
+      Teamtailor, Concludis/d.vinci/rexx/onlyfy CDX-Verify.
+    acceptance: "DONE fuer A-Liste: docs/ats-enumerability.md + ats-pipeline.md. Neue Provider -> Folgetask."
 
   - id: registry-table
     epic: ats-registry
@@ -83,13 +95,15 @@ tasks:
     depends_on: []
     detail: >
       Additive Migration (migrations/), via supabase-MCP anwenden. Key (ats, slug).
-      Spalten: ats, slug, company_name, careers_url, feed_url, source('cc'|'scrape'),
+      Spalten: ats, slug, company_name, careers_url, feed_url, source('cc'|'scrape'|'manual'),
       seen_in_crawls[], status('active'|'paused'|'dead'), monitor bool, domain
       (nullable -> company_profiles.domain), initial_job_count, last_job_count,
+      de_flag('de'|'remote'|'foreign'|null), location_signal text (raw, fuer Audit),
       sample_titles[], discovered_at, last_checked_at, enriched_at, notes.
+      de_flag kommt aus ats_scanner validate (Stage B), keep-for-DE = de∪remote.
       RLS off (wie cr_companies). No-delete-Policy als Tabellen-COMMENT.
-      Index (ats, status, monitor) WHERE monitor.
-    acceptance: "list_tables zeigt ats_companies; Index vorhanden; COMMENT dokumentiert no-delete."
+      Index (ats, status, monitor) WHERE monitor; Index (de_flag) fuer DE-Filter.
+    acceptance: "list_tables zeigt ats_companies; Indizes vorhanden; COMMENT dokumentiert no-delete; de_flag-Spalte da."
 
   - id: seed-registry
     epic: ats-registry
