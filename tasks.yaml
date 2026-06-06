@@ -1,0 +1,167 @@
+# Discovery Engine — Task Backlog
+#
+# Companion to ROADMAP.md (Variant-C multi-tenant lives there; this file tracks
+# single-tenant feature epics). Status: backlog | in_progress | done | blocked.
+# Priority: P1 (next) > P2 > P3. depends_on references task ids.
+
+epics:
+  - id: ats-registry
+    title: ATS-Scanner + Multi-ATS Company-Registry (CC-fed, progressive, no-delete)
+    status: backlog
+    context: >
+      Common-Crawl-Enumeration der Personio-Boards (495) skaliert zu einer Registry
+      ALLER Unternehmen aller deutschen ATS. Eine Supabase-Tabelle erfasst jede via
+      CC entdeckte ATS-Firma, wird progressiv aus Job-Anzeigen + eigenem Enrichment
+      angereichert und NIE geleert — ein periodischer CC-Recheck ergaenzt nur neu
+      hinzugekommene Firmen. Basis ist der generalisierte ATS-Scanner
+      (aus scripts/enumerate_personio.py). Fokus zunaechst kleine DE-Anbieter (Softgarden).
+    notes:
+      cc_enumerable_existing_sources:
+        # slug-basierte shared-host ATS — schon Source, aber nur curated yaml-Slugs;
+        # CC-Scan wuerde sie massiv erweitern.
+        - personio      # {slug}.jobs.personio.de/xml        (done)
+        - factorial     # {slug}.factorialhr.{tld}/sitemap.xml
+        - recruitee     # {slug}.recruitee.com/api/offers
+        - greenhouse    # boards.greenhouse.io/{slug}
+        - lever         # jobs.lever.co/{slug}
+        - ashby         # jobs.ashbyhq.com/{slug}
+        - breezy        # {slug}.breezy.hr/json
+      not_cc_enumerable_query_apis:
+        # kein per-company Slug zum Enumerieren — Query/Aggregator-APIs.
+        - adzuna
+        - arbeitsagentur
+        - careerjet
+        - indeed
+        - jooble
+        - linkedin
+        - themuse
+        - rss
+      new_ats_cc_enumerable:
+        softgarden:      "{slug}.career.softgarden.de — Jobs-API dev.softgarden.de — DE, P1"
+        teamtailor:      "{slug}.teamtailor.com — RSS/API — P2"
+        workable:        "apply.workable.com/{slug} — API — P3"
+        smartrecruiters: "careers.smartrecruiters.com/{slug} — API — P3"
+        verify:          "concludis, d.vinci, rexx, onlyfy/Prescreen — custom-domain? CDX-Test noetig"
+
+tasks:
+  - id: ats-scanner
+    epic: ats-registry
+    title: Generalisierter ATS-Scanner (provider-pluggbar) aus enumerate_personio.py
+    status: backlog
+    priority: P1
+    depends_on: []
+    detail: >
+      enumerate_personio.py -> provider-pluggbarer ATS-Scanner (app/scanner/ oder
+      scripts/ats_scanner.py). Provider-Registry je ATS: domain, slug_extractor,
+      feed_url_template, feed_validator. Ablauf: CC-CDX-Prefix-Search -> Slugs ->
+      Feed-Validate (200 + parsebar). Personio = Reference-Provider, Verhalten/Output
+      erhalten. Weitere Provider fuer alle slug-ATS (A-Liste) + neue (Softgarden ...)
+      hinzufuegbar. scripts/enumerate_personio.py bleibt erhalten (Thin-Wrapper).
+    acceptance: "ats_scanner --ats personio reproduziert die 495 Boards; enumerate_personio.py unangetastet lauffaehig."
+
+  - id: ats-enum-matrix
+    epic: ats-registry
+    title: CC-Enumerierbarkeit + Feed-Endpoint je ATS verifizieren
+    status: backlog
+    priority: P1
+    depends_on: []
+    detail: >
+      Pro Provider CDX-Prefix-Test + Feed-Probe. Bestaetigt: A-Liste (personio,
+      factorial, recruitee, greenhouse, lever, ashby, breezy) + Softgarden + Teamtailor.
+      Verify: Concludis, d.vinci, rexx, onlyfy/Prescreen — falls custom-domain pro
+      Kunde => nicht CC-enumerierbar => raus. Output docs/ats-enumerability.md (Matrix
+      + Feed-Endpoints + DE-Relevanz).
+    acceptance: "docs/ats-enumerability.md mit verifizierter Matrix; jeder 'verify'-Eintrag entschieden."
+
+  - id: registry-table
+    epic: ats-registry
+    title: Supabase-Tabelle ats_companies (no-delete Registry)
+    status: backlog
+    priority: P1
+    depends_on: []
+    detail: >
+      Additive Migration (migrations/), via supabase-MCP anwenden. Key (ats, slug).
+      Spalten: ats, slug, company_name, careers_url, feed_url, source('cc'|'scrape'),
+      seen_in_crawls[], status('active'|'paused'|'dead'), monitor bool, domain
+      (nullable -> company_profiles.domain), initial_job_count, last_job_count,
+      sample_titles[], discovered_at, last_checked_at, enriched_at, notes.
+      RLS off (wie cr_companies). No-delete-Policy als Tabellen-COMMENT.
+      Index (ats, status, monitor) WHERE monitor.
+    acceptance: "list_tables zeigt ats_companies; Index vorhanden; COMMENT dokumentiert no-delete."
+
+  - id: seed-registry
+    epic: ats-registry
+    title: Registry seeden aus Scanner-Output
+    status: backlog
+    priority: P1
+    depends_on: [ats-scanner, registry-table]
+    detail: >
+      scripts/seed_ats_companies.py liest ATS-Scanner-Output, idempotenter upsert
+      on (ats, slug). Personio 495 zuerst, danach Softgarden. initial_job_count nur
+      beim ersten Insert setzen.
+    acceptance: "SELECT count(*) WHERE ats='personio' = 495; Re-Run aendert nichts (idempotent)."
+
+  - id: db-driven-slugs
+    epic: ats-registry
+    title: slug-Scraper lesen aktive Slugs aus ats_companies (Tabelle = SoT)
+    status: backlog
+    priority: P2
+    depends_on: [registry-table]
+    detail: >
+      slug-basierte Scraper lesen Slugs aus ats_companies (status='active' AND
+      monitor=true), Union mit portals.yaml. try/except -> yaml-only bei DB-Fehler
+      (Demo/Tests bleiben gruen). Start personio.py, gleiches Muster fuer factorial,
+      recruitee, greenhouse, lever, ashby, breezy.
+    acceptance: "POST /scrape/personio zieht Slugs aus DB (Log: portals-count > yaml); pytest gruen."
+
+  - id: storage-gate
+    epic: ats-registry
+    title: Title-level Storage-Gate (jobs sauber halten trotz ATS-Flut)
+    status: backlog
+    priority: P2
+    depends_on: []
+    detail: >
+      store_threshold=0 speichert sonst ALLES. Source-local Gate (kein globaler
+      threshold-Change): speichern wenn Titel keywords_positive ODER
+      target_roles_primary/secondary trifft UND kein keywords_negative (aus
+      scoring-profile.yaml). primary-Treffer -> priority-Flag in raw_data. Kein
+      Profil geladen -> alle emittieren (Demo unveraendert). Pure fn + Unit-Test.
+    acceptance: "test_title_gate: 'Agile Coach'->keep+priority, 'KI Trainer'->keep, 'Vertriebsmitarbeiter'/'Heizungsmonteur'->drop."
+
+  - id: softgarden-source
+    epic: ats-registry
+    title: Softgarden-Scraper (neue Source via Jobs-API)
+    status: backlog
+    priority: P2
+    depends_on: [ats-scanner, ats-enum-matrix]
+    detail: >
+      Neuer Scraper @SourceRegistry.register("softgarden"), BaseScraper. Slugs aus
+      ats_companies (db-driven-slugs). Jobs-API dev.softgarden.de je Slug ->
+      {slug}.career.softgarden.de. Runtime-Validation Pflicht: uvicorn + curl
+      POST /scrape/softgarden (nicht nur Import-Test).
+    acceptance: "uvicorn hoch, POST /scrape/softgarden liefert Jobs aus >1 Slug; /health gruen."
+
+  - id: cc-recheck-cron
+    epic: ats-registry
+    title: Periodischer CC-Recheck (neue Firmen ergaenzen, nie loeschen)
+    status: backlog
+    priority: P2
+    depends_on: [ats-scanner, seed-registry]
+    detail: >
+      Geplanter ATS-Scanner-Lauf ueber alle Provider -> upsert neuer Firmen in
+      ats_companies. NIE delete: toter Feed -> status='dead', Zeile bleibt; neuer
+      Slug -> insert. Trigger via n8n cron oder Task Scheduler. ROADMAP-Doku.
+    acceptance: "Recheck-Lauf fuegt neue Slugs hinzu, markiert tote als 'dead', loescht keine Zeile."
+
+  - id: progressive-enrichment
+    epic: ats-registry
+    title: Progressive Anreicherung der Registry-Firmen
+    status: backlog
+    priority: P3
+    depends_on: [registry-table, db-driven-slugs]
+    detail: >
+      (a) aus Job-Anzeigen: Domain-Links, Location, Department -> ats_companies.
+      (b) eigenes Enrichment: Hunter -> company_profiles (PK domain), domain linken,
+      enriched_at setzen. Lazy/quota-aware (Hunter daily_limit 500): zuerst Firmen
+      mit >=1 relevanten Job. Best-effort Domain-Resolution fuer Slugs.
+    acceptance: "Firmen mit relevanten Jobs haben domain + company_profiles-Eintrag; Hunter-Quota nicht ueberschritten."

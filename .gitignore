@@ -17,3 +17,7 @@ excalidraw.log
 config/portals.local.yaml
 config/*.local.yaml
 .understand-anything/
+
+# enumeration outputs (regeneratable, not source)
+scripts/out/
+scripts/out_enum.log
