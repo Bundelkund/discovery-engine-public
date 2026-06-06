@@ -13,6 +13,7 @@ from app.config import resolve_local_override
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
 from app.sources.base import BaseScraper
+from app.sources.db_slugs import load_active_slugs
 
 logger = logging.getLogger(__name__)
 CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
@@ -54,6 +55,14 @@ class FactorialScraper(BaseScraper):
             portals_file = config.get("portals_file", "config/portals.yaml")
             portals_path = resolve_local_override(portals_file)
             entries = self._load_slugs(portals_path)
+            # T5: union active DB slugs (default tld 'com' — registry seed is
+            # .com-only). Tuples keep factorial's (slug, tld) shape.
+            existing = {slug for slug, _ in entries}
+            entries += [
+                (slug, "com")
+                for slug in load_active_slugs(self.source_id)
+                if slug not in existing
+            ]
 
             all_jobs = []
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:

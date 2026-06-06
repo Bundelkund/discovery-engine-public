@@ -115,15 +115,17 @@ async def test_minhash_catches_near_duplicates_across_sources():
         "Postgres experience. Remote-friendly German SaaS team. "
     ) * 4  # ensure > shingle_size
 
+    # Title must pass the T6 storage-gate (Florian profile is loaded) so the
+    # jobs reach the MinHash stage — "AI Coach" is a primary target role.
     job_a = NormalizedJob(
-        title="Senior Python",
+        title="AI Coach",
         url="https://linkedin.com/jobs/1",
         source="linkedin",
         external_id="li-1",
         description=desc,
     )
     job_b = NormalizedJob(
-        title="Senior Python",
+        title="AI Coach",
         url="https://indeed.com/jobs/2",
         source="indeed",
         external_id="in-2",

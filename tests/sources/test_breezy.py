@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -55,5 +56,7 @@ async def test_breezy_fetch_returns_empty_on_no_slugs(tmp_path: Path):
     p = tmp_path / "portals.yaml"
     p.write_text(yaml.dump({"tracked_companies": []}))
     scraper = BreezyScraper()
-    result = await scraper.fetch({"portals_file": str(p)})
+    # Isolate from ats_companies — DB-slug union is covered by test_db_slugs.
+    with patch("app.sources.db_slugs.load_active_slugs", return_value=[]):
+        result = await scraper.fetch({"portals_file": str(p)})
     assert result == []

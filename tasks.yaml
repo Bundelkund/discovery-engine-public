@@ -132,7 +132,7 @@ tasks:
   - id: db-driven-slugs
     epic: ats-registry
     title: slug-Scraper lesen aktive Slugs aus ats_companies (Tabelle = SoT)
-    status: backlog
+    status: done
     priority: P2
     depends_on: [registry-table, storage-gate]   # T6 vor T5: erst Title-Gate, sonst jobs-Flut bei 5915 Boards
     detail: >
@@ -141,11 +141,23 @@ tasks:
       (Demo/Tests bleiben gruen). Start personio.py, gleiches Muster fuer factorial,
       recruitee, greenhouse, lever, ashby, breezy.
     acceptance: "POST /scrape/personio zieht Slugs aus DB (Log: portals-count > yaml); pytest gruen."
+    done_note: >
+      Helper app/sources/db_slugs.py: load_active_slugs(ats) (standalone supabase
+      client aus get_settings; [] bei JEDEM Fehler/leeren Creds -> yaml-Fallback) +
+      merge_slugs(yaml, ats) (order-preserving Union+Dedup, Log 'N total = M yaml + K db').
+      Verdrahtet in allen 7 slug-Scrapern: personio/lever/greenhouse/ashby/recruitee/breezy
+      via merge_slugs(self._load_slugs(...), self.source_id); factorial via load_active_slugs
+      (tuple-Shape (slug,'com'), .com-only Seed). source_id == ats-Key in allen Faellen.
+      Tests: tests/sources/test_db_slugs.py (6). 3 bestehende '_returns_empty_on_no_slugs'
+      Tests (breezy/recruitee/factorial) isoliert via patch load_active_slugs->[] —
+      vorher schlugen sie fehl/liefen 600s+ weil .env echte Creds hat -> realer DB-Hit.
+      tests/sources 61 passed in 4.3s. (Voll-Suite-1-Prozess crasht weiter nativ in
+      datasketch = pre-existing, Komponenten je gruen: orchestrator+scoring+gate 24.)
 
   - id: storage-gate
     epic: ats-registry
     title: Title-level Storage-Gate (jobs sauber halten trotz ATS-Flut)
-    status: backlog
+    status: done
     priority: P2
     depends_on: []
     detail: >
@@ -155,6 +167,16 @@ tasks:
       scoring-profile.yaml). primary-Treffer -> priority-Flag in raw_data. Kein
       Profil geladen -> alle emittieren (Demo unveraendert). Pure fn + Unit-Test.
     acceptance: "test_title_gate: 'Agile Coach'->keep+priority, 'KI Trainer'->keep, 'Vertriebsmitarbeiter'/'Heizungsmonteur'->drop."
+    done_note: >
+      Pure fn app/scoring/storage_gate.py::title_gate(title, profile)->(keep, priority).
+      Match-Semantik gespiegelt von keyword.py: keywords via _word_match (word-boundary),
+      target_roles via Substring. Negativ-Veto zuerst; keine Positiv-Signale -> Gate aus
+      (keep=True, Demo unveraendert). Verdrahtet in scrape_orchestrator: Early-Gate nach
+      Dedup VOR description-resolution/MinHash/scoring (Flut-Control) -> response.jobs_gated;
+      priority -> dq_flags['priority']=True (persistiert, da raw_data nicht in jobs-Schema).
+      Tests: tests/test_storage_gate.py (8) gruen + MinHash-Orchestrator-Test auf
+      gate-passing Titel 'AI Coach' angepasst. 200 Tests gruen (gruppiert; Voll-Suite-1-Prozess
+      crasht nativ in datasketch LSH = pre-existing Windows-Flake, nicht diese Aenderung).
 
   - id: ats-new-providers
     epic: ats-registry

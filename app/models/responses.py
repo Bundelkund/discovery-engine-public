@@ -10,6 +10,7 @@ class ScrapeResponse(BaseModel):
     jobs_found: int = 0
     jobs_new: int = 0
     jobs_duplicate: int = 0
+    jobs_gated: int = 0
     jobs_below_threshold: int = 0
     jobs_stored: int = 0
     jobs_enriched: int = 0

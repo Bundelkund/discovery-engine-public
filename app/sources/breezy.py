@@ -8,6 +8,7 @@ from app.config import resolve_local_override
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
 from app.sources.base import BaseScraper
+from app.sources.db_slugs import merge_slugs
 
 logger = logging.getLogger(__name__)
 CONFIG_DIR = Path(__file__).parent.parent.parent / "config"
@@ -22,7 +23,7 @@ class BreezyScraper(BaseScraper):
         try:
             portals_file = config.get("portals_file", "config/portals.yaml")
             portals_path = resolve_local_override(portals_file)
-            slugs = self._load_slugs(portals_path)
+            slugs = merge_slugs(self._load_slugs(portals_path), self.source_id)
 
             all_jobs = []
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:

@@ -19,6 +19,7 @@ from app.registry.source_registry import SourceRegistry
 from app.repositories.companies import CompanyRepository
 from app.repositories.jobs import JobRepository
 from app.scoring.pipeline import ScoringPipeline
+from app.scoring.storage_gate import title_gate
 from app.scoring.types import ScoringProfile
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,20 @@ class ScrapeOrchestrator:
                 response.duration_ms = int((time.time() - start) * 1000)
                 return response
 
+            # 4·gate. Title-level storage gate (T6): drop titles that hit no
+            # profile signal BEFORE the expensive description-resolution +
+            # MinHash + scoring passes. Without this, db-driven-slugs (T5)
+            # would flood `jobs` with ~5915 boards x N jobs. Empty profile
+            # -> gate disabled (keep all). priority flag is set in the DQ
+            # loop (4c) so it lands in dq_flags.
+            gated = [j for j in new_jobs if title_gate(j.title, profile)[0]]
+            response.jobs_gated = len(new_jobs) - len(gated)
+            new_jobs = gated
+
+            if not new_jobs:
+                response.duration_ms = int((time.time() - start) * 1000)
+                return response
+
             # 4a. Resolve thin descriptions from posting origin (ATS / career page).
             # Runs before MinHash + Stage-1 so near-dup detection and keyword
             # scoring both see full text. Best-effort: failures leave jobs as-is.
@@ -133,6 +148,9 @@ class ScrapeOrchestrator:
 
                 # Rules classification
                 verdict, flags = self._rules_engine.classify(job_dict)
+                # T6: primary-role title -> priority flag (persisted via dq_flags)
+                if title_gate(job_dict.get("title", ""), profile)[1]:
+                    flags["priority"] = True
                 job_dict["dq_flags"] = flags
 
                 if verdict == "reject" and reject_active:
