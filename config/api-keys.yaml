@@ -23,3 +23,12 @@ consumers:
     key_env: JH_API_KEY
     scopes: [jobs:read]
     active: false
+
+  # n8n scheduler — triggers POST /scan/{stage} (T8 cc-recheck-cron). Stage B daily
+  # revalidate + Stage A monthly discover. jobs:read lets it poll GET /scan/runs.
+  # Key value lives in Coolify Env (N8N_API_KEY), NOT in the gitignored .env image.
+  - id: n8n
+    name: "n8n Scheduler"
+    key_env: N8N_API_KEY
+    scopes: [scrape:trigger, jobs:read]
+    active: true
