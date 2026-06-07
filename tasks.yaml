@@ -229,7 +229,7 @@ tasks:
       {slug}.career.softgarden.de/jobs.json. Runtime-Validation Pflicht: uvicorn + curl
       POST /scrape/softgarden (nicht nur Import-Test).
     acceptance: "uvicorn hoch, POST /scrape/softgarden liefert Jobs aus >1 Slug; /health gruen."
-    prod_status: "Code in private/main (da859bb), NICHT live bis Coolify-Redeploy (prod=b3b7d22). 104 Boards in Supabase geseedet, ungenutzt bis Redeploy."
+    prod_status: "LIVE (2026-06-07): da859bb auto-deployed (~360s build), /health zeigt softgarden. 104 Boards in Supabase aktiv nutzbar (db-slugs live)."
     done_note: >
       app/sources/softgarden.py: SoftgardenScraper. Feed = {slug}.career.softgarden.de/jobs.json
       (NICHT dev.softgarden.de — das war nur Docs-Host; echter Feed per ats-new-providers-Probe
@@ -290,9 +290,9 @@ tasks:
       n8n WF wC41eZ0xxYGLRVlA (Monthly 8th, 26 4 8 * *, versetzt zu Stage A am 1.) -> POST
       discovery-engine.konektos.de/scan/discover-lever, X-API-Key=N8N. INAKTIV angelegt.
       Smoke lokal: 202->409-lock->done, fetch/scanner/seed rc=0, seed_summary "0 inserted, 49 updated".
-      Code in private/main (da859bb). OFFEN (User, 2 Schritte): (1) THEIRSTACK_API_KEY in Coolify-Env
-      + Coolify-REDEPLOY (prod laeuft noch b3b7d22 -> ohne softgarden/lever-scraper/db-slugs/discover-lever;
-      Seeds liegen ungenutzt bis Redeploy). (2) /health softgarden-check gruen -> WF wC41eZ0xxYGLRVlA aktivieren.
+      da859bb LIVE in prod (auto-deployed ~360s, /health softgarden gruen -> scan.py discover-lever +
+      db-slugs aktiv). OFFEN (User, 2 Schritte): (1) THEIRSTACK_API_KEY in Coolify-Env setzen (sonst
+      failt discover-lever-fetch wenn WF feuert). (2) n8n WF wC41eZ0xxYGLRVlA aktivieren (monthly 8th).
 
   - id: progressive-enrichment
     epic: ats-registry
