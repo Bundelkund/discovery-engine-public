@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -42,10 +43,10 @@ SLUG_RE = re.compile(r"lever\.co/([^/?#]+)", re.IGNORECASE)
 
 
 def api_key() -> str:
-    env = dotenv_values(ROOT / ".env")
-    key = env.get("THEIRSTACK_API_KEY")
+    # os.environ first (Coolify/prod injects it there); .env file fallback (local dev).
+    key = os.environ.get("THEIRSTACK_API_KEY") or dotenv_values(ROOT / ".env").get("THEIRSTACK_API_KEY")
     if not key:
-        sys.exit("ERROR: THEIRSTACK_API_KEY not in .env")
+        sys.exit("ERROR: THEIRSTACK_API_KEY not set (env or .env)")
     return key
 
 

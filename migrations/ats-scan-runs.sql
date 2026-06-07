@@ -4,7 +4,7 @@
 -- pollable status + audit trail. RLS off (server-only, mirrors cr_* / ats_companies).
 CREATE TABLE IF NOT EXISTS public.ats_scan_runs (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  stage       text NOT NULL CHECK (stage = ANY (ARRAY['revalidate','discover'])),
+  stage       text NOT NULL CHECK (stage = ANY (ARRAY['revalidate','discover','discover-lever'])),
   status      text NOT NULL DEFAULT 'running'
                 CHECK (status = ANY (ARRAY['running','done','failed'])),
   started_at  timestamptz NOT NULL DEFAULT now(),

@@ -269,6 +269,28 @@ tasks:
       setzen + redeploy, Prod-/health gruen, dann WFs aktivieren.
     acceptance: "DONE: Endpoint+Tabelle+2 n8n-WFs. Aktivierung nach Coolify-Key (User-Schritt)."
 
+  - id: lever-discover-cron
+    epic: ats-registry
+    title: Lever-Discovery-Cron (TheirStack /scan/discover-lever)
+    status: done
+    priority: P2
+    depends_on: [cc-recheck-cron, lever-curated-seed]
+    detail: >
+      Lever ist nicht CC-enumerierbar -> Stage A discover findet keine neuen Lever-Firmen.
+      Neue Stage POST /scan/discover-lever (app/routes/scan.py, _run_lever): TheirStack
+      apply-link-harvest -> DB-Union (alle bekannten lever-Slugs aus ats_companies, gegen
+      ephemeren Container) -> ats_scanner --slugs-file --source scrape -> seed. Gleiches
+      BackgroundTask+ats_scan_runs+409-Lock-Muster wie cc-recheck-cron. n8n monthly WF.
+    done_note: >
+      scan.py: STAGES += discover-lever, _run_lever-Worker (fetch->_union_into_file(DB-Slugs)
+      ->scanner list-mode->seed, Audit wie _run), Helpers _all_lever_slugs/_union_into_file.
+      fetch_lever_theirstack.api_key() prod-fix: os.environ zuerst (Coolify), .env-Fallback.
+      Tests tests/test_scan_lever.py (6) + bestehende test_curated_lever (8) gruen.
+      n8n WF wC41eZ0xxYGLRVlA (Monthly 8th, 26 4 8 * *, versetzt zu Stage A am 1.) -> POST
+      discovery-engine.konektos.de/scan/discover-lever, X-API-Key=N8N. INAKTIV angelegt.
+      OFFEN (User): THEIRSTACK_API_KEY + N8N_API_KEY in Coolify-Env -> redeploy -> /health gruen
+      -> WF wC41eZ0xxYGLRVlA aktivieren. Bis dahin Discovery lokal laufbar (fetch->scanner->seed).
+
   - id: progressive-enrichment
     epic: ats-registry
     title: Progressive Anreicherung der Registry-Firmen

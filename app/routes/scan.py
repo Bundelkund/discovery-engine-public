@@ -32,9 +32,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = REPO_ROOT / "scripts" / "out"
 SCANNER = REPO_ROOT / "scripts" / "ats_scanner.py"
 SEEDER = REPO_ROOT / "scripts" / "seed_ats_companies.py"
+FETCH_LEVER = REPO_ROOT / "scripts" / "fetch_lever_theirstack.py"
+LEVER_CURATED = REPO_ROOT / "config" / "curated-slugs" / "lever.txt"
 
-# stage -> scanner flag (Stage B refresh vs Stage A discover)
+# stage -> scanner flag (Stage B refresh vs Stage A discover). 'discover-lever' is special
+# (TheirStack apply-link harvest, not CDX) and routed to _run_lever, not _run.
 STAGE_FLAG = {"revalidate": "--revalidate", "discover": "--no-validate"}
+STAGES = set(STAGE_FLAG) | {"discover-lever"}
 
 
 def _hydrate_from_db(supabase, ats: str | None) -> dict[str, int]:
@@ -137,16 +141,114 @@ def _run(stage: str, run_id: str, ats: str | None = None, limit: int | None = No
         logger.error("scan_run_failed", extra={"run_id": run_id, "stage": stage, "error": str(e)})
 
 
+def _all_lever_slugs(supabase) -> list[str]:
+    """Every lever slug in ats_companies (incl. inactive) — the no-delete registry is the SoT.
+    Unioned into the curated file so a stateless prod container keeps prior discoveries even
+    though scripts/out/ + the file write-back are ephemeral (mirrors _hydrate_from_db)."""
+    out: list[str] = []
+    page = 0
+    while True:
+        res = (supabase.table("ats_companies").select("slug").eq("ats", "lever")
+               .range(page * 1000, page * 1000 + 999).execute())
+        out.extend(r["slug"] for r in (res.data or []) if r.get("slug"))
+        if not res.data or len(res.data) < 1000:
+            return out
+        page += 1
+
+
+def _union_into_file(path: Path, slugs: list[str]) -> int:
+    """Union slugs into the curated file (dedup, header preserved). Returns total slug count."""
+    existing, header = [], []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            (header if line.startswith("#") else existing).append(line.strip())
+    merged = sorted({s for s in [*existing, *slugs] if s and not s.startswith("#")})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join([*header, *merged]) + "\n", encoding="utf-8")
+    return len(merged)
+
+
+def _run_lever(run_id: str, max_credits: int | None = None) -> None:
+    """Background worker for the discover-lever stage: TheirStack apply-link harvest ->
+    union with DB lever slugs -> validate via scanner list-mode -> seed. Mirrors _run's audit.
+    max_credits caps the TheirStack spend (testing/cost control; n8n passes none -> fetch default)."""
+    from app.dependencies import get_supabase as _gs
+
+    supabase = _gs()
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log_path = OUT_DIR / f"scan-discover-lever-{ts}.log"
+    stats: dict = {"log_path": str(log_path)}
+    try:
+        with open(log_path, "w", encoding="utf-8") as log:
+            fetch_cmd = [sys.executable, str(FETCH_LEVER), "--out", str(LEVER_CURATED)]
+            if max_credits:
+                fetch_cmd += ["--max-credits", str(max_credits)]
+            fetch = subprocess.run(
+                fetch_cmd, cwd=str(REPO_ROOT), stdout=log, stderr=subprocess.STDOUT, text=True,
+            )
+            stats["fetch_rc"] = fetch.returncode
+            log.write(f"\n--- fetch rc={fetch.returncode} ---\n")
+            # DB-union so prior discoveries survive the ephemeral container/file.
+            db_slugs = _all_lever_slugs(supabase)
+            total = _union_into_file(LEVER_CURATED, db_slugs)
+            stats["curated_total"] = total
+            stats["db_union"] = len(db_slugs)
+            log.write(f"--- db-union: +{len(db_slugs)} known -> {total} total slugs ---\n")
+            log.flush()
+            if fetch.returncode != 0:
+                raise RuntimeError(f"fetch exited {fetch.returncode}")
+
+            scan = subprocess.run(
+                [sys.executable, str(SCANNER), "--ats", "lever",
+                 "--slugs-file", str(LEVER_CURATED), "--source", "scrape"],
+                cwd=str(REPO_ROOT), stdout=log, stderr=subprocess.STDOUT, text=True,
+            )
+            stats["scanner_rc"] = scan.returncode
+            log.write(f"\n--- scanner rc={scan.returncode} ---\n")
+            log.flush()
+            if scan.returncode != 0:
+                raise RuntimeError(f"scanner exited {scan.returncode}")
+
+            seed = subprocess.run(
+                [sys.executable, str(SEEDER), "--ats", "lever"],
+                cwd=str(REPO_ROOT), capture_output=True, text=True,
+            )
+            stats["seed_rc"] = seed.returncode
+            log.write(seed.stdout or "")
+            log.write(seed.stderr or "")
+            lines = [ln for ln in (seed.stdout or "").splitlines() if ln.strip()]
+            stats["seed_summary"] = lines[-1] if lines else ""
+            if seed.returncode != 0:
+                err_tail = (seed.stderr or "").strip()[-800:] or stats["seed_summary"]
+                stats["seed_stderr_tail"] = err_tail
+                raise RuntimeError(f"seeder exited {seed.returncode}: {err_tail}")
+
+        supabase.table("ats_scan_runs").update(
+            {"status": "done", "finished_at": datetime.now(timezone.utc).isoformat(),
+             "stats": stats}
+        ).eq("id", run_id).execute()
+        logger.info("scan_run_done", extra={"run_id": run_id, "stage": "discover-lever"})
+    except Exception as e:  # noqa: BLE001
+        supabase.table("ats_scan_runs").update(
+            {"status": "failed", "finished_at": datetime.now(timezone.utc).isoformat(),
+             "stats": stats, "error": str(e)[:2000]}
+        ).eq("id", run_id).execute()
+        logger.error("scan_run_failed", extra={"run_id": run_id, "stage": "discover-lever", "error": str(e)})
+
+
 @scan_router.post("/{stage}", status_code=202, dependencies=[Depends(require_scope("scrape:trigger"))])
 async def trigger_scan(
     stage: str,
     background_tasks: BackgroundTasks,
     ats: str | None = Query(None, description="narrow to one provider (default: all)"),
     limit: int | None = Query(None, ge=1, description="cap slugs (testing/targeted reruns)"),
+    max_credits: int | None = Query(None, ge=1, description="discover-lever: cap TheirStack credit spend"),
     supabase=Depends(get_supabase),
 ):
-    if stage not in STAGE_FLAG:
-        raise HTTPException(status_code=404, detail=f"unknown stage '{stage}' (revalidate|discover)")
+    if stage not in STAGES:
+        raise HTTPException(status_code=404,
+                            detail=f"unknown stage '{stage}' (revalidate|discover|discover-lever)")
 
     # one run per stage at a time -> no overlapping CC fetches
     running = (
@@ -165,7 +267,10 @@ async def trigger_scan(
          "stats": {"ats": ats, "limit": limit} if (ats or limit) else None}
     ).execute()
     run_id = ins.data[0]["id"]
-    background_tasks.add_task(_run, stage, run_id, ats, limit)
+    if stage == "discover-lever":
+        background_tasks.add_task(_run_lever, run_id, max_credits)
+    else:
+        background_tasks.add_task(_run, stage, run_id, ats, limit)
     logger.info("scan_run_started", extra={"run_id": run_id, "stage": stage, "ats": ats})
     return {"run_id": run_id, "stage": stage, "status": "running"}
 
