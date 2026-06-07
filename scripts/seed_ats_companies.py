@@ -58,14 +58,14 @@ def status_of(v: dict) -> str:
     return "dead" if v.get("error") else "paused"  # error=404 dead; empty feed paused
 
 
-def row_from(ats: str, v: dict, crawls: list[str]) -> dict:
+def row_from(ats: str, v: dict, crawls: list[str], source: str = "cc") -> dict:
     st = status_of(v)
     jc = v.get("job_count") or 0
     return {
         "ats": ats,
         "slug": v["slug"],
         "feed_url": v.get("feed_url"),
-        "source": "cc",
+        "source": source,
         "seen_in_crawls": crawls,
         "status": st,
         "monitor": st != "dead",  # don't daily-poll 404s; Stage A can revive
@@ -113,6 +113,7 @@ def seed_ats(client, base, hdr, path: Path) -> tuple[int, int]:
     d = json.loads(path.read_text(encoding="utf-8"))
     ats = d["ats"]
     crawls = d.get("crawls") or []
+    source = d.get("source") or "cc"  # curated lists tag source; CC JSONs omit it
     vals = d.get("all_validations") or []
     if not vals:
         print(f"{ats}: no all_validations, skip")
@@ -122,7 +123,7 @@ def seed_ats(client, base, hdr, path: Path) -> tuple[int, int]:
     for v in vals:
         if not v.get("slug"):
             continue
-        r = row_from(ats, v, crawls)
+        r = row_from(ats, v, crawls, source)
         if v["slug"] in have:
             upd_rows.append(r)  # preserve initial_job_count + discovered_at -> omit them
         else:

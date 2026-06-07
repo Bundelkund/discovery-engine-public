@@ -475,10 +475,29 @@ def _load_prior(ats):
     return seen, rep.get("crawls", [])
 
 
+def _load_slugs_file(path: str) -> list[str]:
+    """Read slugs (one per line, # comments ok) for a non-CC-enumerable ATS (e.g. lever).
+    Slugs are taken verbatim (lowercased) — Lever allows dotted slugs, so no _clean_slug."""
+    p = Path(path)
+    if not p.exists():
+        sys.exit(f"--slugs-file not found: {p}")
+    out = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.append(line.lower())
+    return out
+
+
 def scan(ats, args, client):
     prov = PROVIDERS[ats]
     print(f"\n=== {ats} ({prov['mode']}) ===", file=sys.stderr)
-    if args.revalidate:
+    if args.slugs_file:
+        seen = {s: set() for s in _load_slugs_file(args.slugs_file)}
+        crawls = []
+        truncated = False
+        print(f"  slugs-file: {len(seen)} slugs (no CDX, source={args.source})", file=sys.stderr)
+    elif args.revalidate:
         seen, crawls = _load_prior(ats)
         truncated = False
         print(f"  revalidate: {len(seen)} prior slugs (no CDX)", file=sys.stderr)
@@ -510,6 +529,7 @@ def scan(ats, args, client):
             de_counts[v["de_flag"]] += 1
     report = {
         "ats": ats, "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source": args.source,
         "crawls": crawls, "cdx_domains": prov["cdx_domains"],
         "total_slugs_seen": len(seen), "validated": (not args.no_validate),
         "truncated": truncated,
@@ -540,6 +560,13 @@ def main() -> int:
     ap.add_argument("--no-validate", action="store_true", help="CDX slugs only, skip feeds")
     ap.add_argument("--revalidate", action="store_true",
                     help="skip CDX, re-probe feeds of prior {ats}-enumeration.json")
+    ap.add_argument("--slugs-file",
+                    help="validate slugs from a file (one per line), skip CDX — for "
+                         "non-CC-enumerable ATS like lever")
+    ap.add_argument("--source", default="cc",
+                    help="provenance tag in enumeration JSON; must satisfy ats_companies "
+                         "CHECK (cc|scrape|manual). Default cc; use 'scrape' (apply-link-"
+                         "derived, e.g. lever via TheirStack) with --slugs-file")
     ap.add_argument("--retries", type=int, default=5, help="CDX retries on 5xx/timeout")
     ap.add_argument("--max-pages", type=int, default=0, help="cap CDX pages per crawl (0=all)")
     args = ap.parse_args()
@@ -548,6 +575,8 @@ def main() -> int:
         ap.error("pass --ats <name> or --all")
     if args.revalidate and args.no_validate:
         ap.error("--revalidate and --no-validate are mutually exclusive")
+    if args.slugs_file and (args.revalidate or args.all):
+        ap.error("--slugs-file is single-provider + CDX-free (use with --ats, not --all/--revalidate)")
     targets = sorted(PROVIDERS) if args.all else [args.ats]
 
     summary = []

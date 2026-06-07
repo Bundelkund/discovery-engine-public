@@ -29,15 +29,16 @@ epics:
       not_cc_enumerable_robots_blocked:
         - lever         # jobs.lever.co — robots.txt disallows crawl; CC has only robots.txt, 0 company pages
       lever_strategy: >
-        Feed api.lever.co/v0/postings/{slug} works once slug known — enumeration is the
-        only blocker (robots-blocked, 0 CC company pages). validate_feed already emits
-        de_flag for lever. DECISION PENDING — three options, never source='cc':
-        (1) ACCRETE [recommended, low-effort]: harvest jobs.lever.co/{slug} apply-links
-            from jobs found via OTHER sources -> insert source='scrape'. Self-filling, no build.
-        (2) CURATED yaml: known DE lever boards in config/lever-candidates.yaml ->
-            seed source='manual'. ~5min, for a named target set. (file does not exist yet.)
-        (3) WAT link-graph mining [P3, heavy]: grep CC WAT outlinks for jobs.lever.co/{slug}.
-        Pick (1) as default + (2) when concrete lever targets exist; (3) only if broad coverage critical.
+        DECISION RESOLVED (2026-06-07) — option (1)+(2) hybrid via TheirStack apply-link harvest,
+        source='scrape' (never 'cc'). scripts/fetch_lever_theirstack.py pulls jobs.lever.co/{slug}
+        apply-links from TheirStack job-search (data_source lever.co + country=DE), credit-budgeted
+        (1 credit/job, free 200/mo; --max-credits guards the cap, logs coverage + truncated). Distinct
+        slugs union into config/curated-slugs/lever.txt (versioned SoT, dotted slugs like valpeo.com
+        kept). Then ats_scanner --slugs-file --source scrape (CDX-free list-mode, reuses validate_feed
+        + de_flag) -> lever-enumeration.json -> seed_ats_companies (source honored from JSON). First run:
+        49 slugs -> 41 active / 38 de seeded; load_active_slugs('lever')=41 (db-driven-slugs picks up).
+        TheirStack DE-lever universe ~136 companies -> re-run fetch monthly for the tail (credits reset).
+        (3) WAT link-graph mining stays P3 (only if broad coverage critical). api.lever.co feed unchanged.
       pipeline_currency: >
         Two cadences, no-delete (docs/ats-pipeline.md): Stage A discover (monthly, CC CDX
         --no-validate -> new slugs) + Stage B refresh (daily/weekly, --revalidate -> active/
