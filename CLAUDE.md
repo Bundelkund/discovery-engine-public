@@ -62,6 +62,7 @@ Full env table + persistent-file-volume (`portals.local.yaml`) details: florian-
 
 | Rule | Why |
 |------|-----|
+| **`git push private main` is the DEFAULT push** — always push code to `private` (Coolify deploy repo); `public` (`discovery-engine-public`) is a secondary OSS mirror, push there too but it never deploys | The local branch tracks `public/main`, so a bare `git push` goes to `public` only and **prod silently stays behind**. Always `git push private main` (then `public`). Verify prod after build (~5min): `curl .../health` reflects new sources. |
 | New scrapers register via `@SourceRegistry.register("<id>")` in `app/sources/` and inherit `BaseScraper` | Auto-discovered through side-effect imports in `app/sources/__init__.py` |
 | Repository methods are sync; wrap in `asyncio.to_thread` from async routes | `supabase-py` is sync; would otherwise block the FastAPI event loop |
 | Configs are YAML in `config/`, loaded via cached `load_*_config()` in `app/config.py` | Avoid re-parsing per request |
