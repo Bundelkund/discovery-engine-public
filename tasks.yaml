@@ -218,16 +218,33 @@ tasks:
 
   - id: softgarden-source
     epic: ats-registry
-    title: Softgarden-Scraper (neue Source via Jobs-API)
-    status: backlog
+    title: Softgarden-Scraper (neue Source via jobs.json DataFeed)
+    status: done
     priority: P2
     depends_on: [ats-new-providers, db-driven-slugs]   # braucht Softgarden-CDX-Verify + DB-Slugs
     detail: >
       Neuer Scraper @SourceRegistry.register("softgarden"), BaseScraper. Slugs aus
-      ats_companies (db-driven-slugs). Jobs-API dev.softgarden.de je Slug ->
-      {slug}.career.softgarden.de. Runtime-Validation Pflicht: uvicorn + curl
+      ats_companies (db-driven-slugs) + portals.yaml-Fallback. Feed je Slug ->
+      {slug}.career.softgarden.de/jobs.json. Runtime-Validation Pflicht: uvicorn + curl
       POST /scrape/softgarden (nicht nur Import-Test).
     acceptance: "uvicorn hoch, POST /scrape/softgarden liefert Jobs aus >1 Slug; /health gruen."
+    done_note: >
+      app/sources/softgarden.py: SoftgardenScraper. Feed = {slug}.career.softgarden.de/jobs.json
+      (NICHT dev.softgarden.de — das war nur Docs-Host; echter Feed per ats-new-providers-Probe
+      gefunden). schema.org DataFeed -> dataFeedElement[].item (JobPosting). Mapping: title,
+      url, description (HTML roh, wie recruitee), company aus identifier.name (Fallback
+      hiringOrganization.name -> slug), external_id=identifier.value, location aus
+      jobLocation.address (Locality, Region; Fallback Country/PLZ), posted_at=datePosted
+      (ISO->datetime). Slugs via merge_slugs(yaml, 'softgarden') -> DB-Union + portals.yaml,
+      _load_slugs extrahiert subdomain-label von *.career.softgarden.de. Registriert in
+      app/sources/__init__.py; config/sources.yaml + Generator sync-search-profile.js (florian-knowledge)
+      um softgarden-Eintrag erweitert (enabled, portals_file). Tests: tests/sources/test_softgarden.py
+      (10, inkl. _to_raw real-shape fixture + _format_location-Fallbacks + normalize-hash). sources 70 passed.
+      RUNTIME-VALIDATION (Pflicht erfuellt): (1) direkter fetch gegen LIVE abeking-Board =
+      28 echte Jobs normalisiert (company/location/ext_id/posted_at/url + content_hash). (2) uvicorn
+      --env-file .env: /health 200, /scrape/softgarden in OpenAPI gemountet, no-key->422,
+      wrong-key->401, authed(store:false)->200 source=softgarden (found=0, da noch keine
+      softgarden-Slugs in portals/ats_companies geseedet -> Folgearbeit cc-recheck/seed).
 
   - id: cc-recheck-cron
     epic: ats-registry

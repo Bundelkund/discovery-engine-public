@@ -78,6 +78,9 @@ sources:
   factorial:
     enabled: true
     portals_file: "config/portals.yaml"
+  softgarden:
+    enabled: true
+    portals_file: "config/portals.yaml"
   linkedin:
     enabled: true
     location: "Germany"
