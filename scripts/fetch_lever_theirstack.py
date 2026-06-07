@@ -127,7 +127,8 @@ def main() -> int:
     ap.add_argument("--country", default="DE", help="ISO country code (default DE)")
     ap.add_argument("--max-age-days", type=int, default=90, help="posting recency window (default 90)")
     ap.add_argument("--max-credits", type=int, default=150, help="credit budget = max jobs fetched (default 150, free tier=200/mo)")
-    ap.add_argument("--page-size", type=int, default=50, help="results per request (default 50)")
+    ap.add_argument("--page-size", type=int, default=25,
+                    help="results per request (default 25 = TheirStack free-tier max; paid allows more)")
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="curated slug file to union into")
     args = ap.parse_args()
 
