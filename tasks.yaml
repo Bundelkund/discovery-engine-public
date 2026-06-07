@@ -229,6 +229,7 @@ tasks:
       {slug}.career.softgarden.de/jobs.json. Runtime-Validation Pflicht: uvicorn + curl
       POST /scrape/softgarden (nicht nur Import-Test).
     acceptance: "uvicorn hoch, POST /scrape/softgarden liefert Jobs aus >1 Slug; /health gruen."
+    prod_status: "Code in private/main (da859bb), NICHT live bis Coolify-Redeploy (prod=b3b7d22). 104 Boards in Supabase geseedet, ungenutzt bis Redeploy."
     done_note: >
       app/sources/softgarden.py: SoftgardenScraper. Feed = {slug}.career.softgarden.de/jobs.json
       (NICHT dev.softgarden.de — das war nur Docs-Host; echter Feed per ats-new-providers-Probe
@@ -265,9 +266,9 @@ tasks:
       Migration ats_scan_runs live (MCP). n8n WFs: Stage B daily BFfKQKCRB8F6jt4V
       (17 4 * * *), Stage A monthly nMGEo1gpoCDSmtQB (23 4 1 * *) -> POST
       discovery-engine.konektos.de/scan/{revalidate,discover}. Lokal runtime-getestet
-      (401/404/409/done+seed_summary/log). OFFEN (User): N8N_API_KEY in Coolify-Env
-      setzen + redeploy, Prod-/health gruen, dann WFs aktivieren.
-    acceptance: "DONE: Endpoint+Tabelle+2 n8n-WFs. Aktivierung nach Coolify-Key (User-Schritt)."
+      (401/404/409/done+seed_summary/log). AKTIVIERT (2026-06-07): N8N_API_KEY in Coolify
+      gesetzt, Stage A/B WFs aktiv (Endpoints schon in b3b7d22 deployed -> laufen gegen prod).
+    acceptance: "DONE: Endpoint+Tabelle+2 n8n-WFs aktiv."
 
   - id: lever-discover-cron
     epic: ats-registry
@@ -288,8 +289,10 @@ tasks:
       Tests tests/test_scan_lever.py (6) + bestehende test_curated_lever (8) gruen.
       n8n WF wC41eZ0xxYGLRVlA (Monthly 8th, 26 4 8 * *, versetzt zu Stage A am 1.) -> POST
       discovery-engine.konektos.de/scan/discover-lever, X-API-Key=N8N. INAKTIV angelegt.
-      OFFEN (User): THEIRSTACK_API_KEY + N8N_API_KEY in Coolify-Env -> redeploy -> /health gruen
-      -> WF wC41eZ0xxYGLRVlA aktivieren. Bis dahin Discovery lokal laufbar (fetch->scanner->seed).
+      Smoke lokal: 202->409-lock->done, fetch/scanner/seed rc=0, seed_summary "0 inserted, 49 updated".
+      Code in private/main (da859bb). OFFEN (User, 2 Schritte): (1) THEIRSTACK_API_KEY in Coolify-Env
+      + Coolify-REDEPLOY (prod laeuft noch b3b7d22 -> ohne softgarden/lever-scraper/db-slugs/discover-lever;
+      Seeds liegen ungenutzt bis Redeploy). (2) /health softgarden-check gruen -> WF wC41eZ0xxYGLRVlA aktivieren.
 
   - id: progressive-enrichment
     epic: ats-registry
