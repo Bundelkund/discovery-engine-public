@@ -180,19 +180,41 @@ tasks:
 
   - id: ats-new-providers
     epic: ats-registry
-    title: Neue ATS CC-Verify (Softgarden, Teamtailor, Concludis/d.vinci/rexx/onlyfy)
-    status: backlog
+    title: Softgarden CC-Verify + PROVIDERS-Registry-Eintrag
+    status: done
     priority: P2
     depends_on: [ats-scanner]
     detail: >
-      Folgetask zu ats-enum-matrix (dort als STILL OPEN markiert). Je Kandidat:
-      CDX-Prefix-Test (CC-enumerierbar? custom-domain -> raus) + Feed-Endpoint-Probe,
-      dann Provider in PROVIDERS-Registry (ats_scanner.py) eintragen. Reihenfolge:
-      Softgarden ({slug}.career.softgarden.de, Jobs-API dev.softgarden.de, DE, P1) zuerst,
-      dann Teamtailor ({slug}.teamtailor.com RSS/API). Concludis/d.vinci/rexx/onlyfy
-      (Prescreen) wahrscheinlich per-customer custom domains -> CDX-Test entscheidet.
-      Output: docs/ats-enumerability.md erweitern (active/raw + de_flag je neuem Provider).
-    acceptance: "Softgarden in PROVIDERS, --ats softgarden liefert active feeds + de_flag; Matrix-Doku erweitert; custom-domain-Kandidaten als nicht-enumerierbar dokumentiert."
+      Folgetask zu ats-enum-matrix. Softgarden ({slug}.career.softgarden.de, DE, P1):
+      CDX-Prefix-Test (CC-enumerierbar?) + Feed-Endpoint-Probe, dann Provider in
+      PROVIDERS-Registry (ats_scanner.py). Unblockt softgarden-source (T7).
+      Teamtailor + custom-domain-Kandidaten (Concludis/d.vinci/rexx/onlyfy) -> ats-providers-batch2 (P3).
+    acceptance: "Softgarden in PROVIDERS, --ats softgarden liefert active feeds + de_flag; Matrix-Doku erweitert."
+    done_note: >
+      Live-CDX-Probe career.softgarden.de = CC-enumerierbar (subdomain-mode,
+      suffix .career.softgarden.de): 104 distinct slugs ueber 2 crawls (CC-MAIN-2026-21+17),
+      nicht truncated (kleine Domain, 1 page/crawl). Feed-Endpoint: {slug}.career.softgarden.de/jobs.json
+      = schema.org DataFeed (200, bot-friendly), Jobs unter dataFeedElement[].item mit
+      vollem JobPosting (title/url/description/jobLocation.address). dev.softgarden.de war
+      nur Docs-Host; echter Feed = /jobs.json (per Live-Probe gefunden, nicht dokumentiert-vermutet).
+      PROVIDERS-Eintrag + neuer kind 'sg-datafeed' in _parse_feed + loc 'softgarden' in _de_flag
+      (addressCountry='Deutschland' -> de). Live durch Scanner: --ats softgarden --crawls 2 =
+      104 raw / 98 active / 95 de / 0 remote-nc / 3 foreign (DE-only TLD, wie personio).
+      docs/ats-enumerability.md: Matrix-Row + DE-Tabelle + Totals (6013 active) + Still-to-verify
+      aktualisiert. Probe-Script geloescht (kein dead code).
+
+  - id: ats-providers-batch2
+    epic: ats-registry
+    title: Teamtailor + custom-domain ATS CC-Verify (batch 2)
+    status: backlog
+    priority: P3
+    depends_on: [ats-scanner]
+    detail: >
+      Rest aus ats-new-providers. Teamtailor ({slug}.teamtailor.com RSS/API) zuerst —
+      vermutlich CC-enumerierbar. Dann Concludis/d.vinci/rexx/onlyfy (Prescreen):
+      wahrscheinlich per-customer custom domains -> CDX-Prefix-Test entscheidet (custom = raus,
+      als nicht-enumerierbar dokumentieren wie lever). Je enumerierbarem: PROVIDERS-Eintrag + Matrix-Row.
+    acceptance: "Je Kandidat: CDX-Verdict (enumerierbar/custom) in docs/ats-enumerability.md; enumerierbare in PROVIDERS mit active/de_flag."
 
   - id: softgarden-source
     epic: ats-registry

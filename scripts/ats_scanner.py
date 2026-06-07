@@ -83,6 +83,13 @@ PROVIDERS: dict[str, dict] = {
         "feed": "https://{slug}.factorialhr.com/sitemap.xml", "kind": "sitemap:/job_posting/",
         "loc": None,  # sitemap carries no location -> de_flag stays unknown via feed
     },
+    "softgarden": {
+        "cdx_domains": ["career.softgarden.de"],
+        "mode": "subdomain", "suffix": ".career.softgarden.de",
+        # schema.org DataFeed of JobPosting under dataFeedElement[].item (200, bot-friendly)
+        "feed": "https://{slug}.career.softgarden.de/jobs.json", "kind": "sg-datafeed",
+        "loc": "softgarden",  # PostalAddress.addressCountry — **DE-only TLD** → DE-leaning
+    },
     "greenhouse": {
         "cdx_domains": ["boards.greenhouse.io", "job-boards.greenhouse.io"],
         "mode": "path", "skip": {"embed", "api"},
@@ -306,6 +313,14 @@ def _de_flag(loc_kind, resp):
         if loc_kind == "lever":
             return _fold(_cat_str((j.get("categories") or {}).get("location") or "")
                          for j in resp.json() if isinstance(j, dict))
+        if loc_kind == "softgarden":
+            cats = []
+            for e in resp.json().get("dataFeedElement", []):
+                addr = ((e.get("item") or {}).get("jobLocation") or {}).get("address") or {}
+                blob = " ".join(str(addr.get(k) or "") for k in
+                                ("addressCountry", "addressLocality", "addressRegion"))
+                cats.append(_cat_str(blob))
+            return _fold(cats)
         if loc_kind == "personio":
             return _fold(_cat_str(p.findtext("office") or "")
                          for p in ET.fromstring(resp.text).findall("position"))
@@ -370,6 +385,17 @@ def _parse_feed(resp, kind, out):
         positions = ET.fromstring(resp.text).findall("position")
         out.update(active=True, job_count=len(positions),
                    sample_titles=[p.findtext("name", "").strip() for p in positions[:3]])
+        return out
+    if kind == "sg-datafeed":
+        # schema.org DataFeed -> jobs are dataFeedElement[].item
+        data = resp.json()
+        elems = data.get("dataFeedElement", []) if isinstance(data, dict) else []
+        jobs = [e["item"] for e in elems
+                if isinstance(e, dict) and isinstance(e.get("item"), dict)]
+        if not jobs:
+            out["error"] = "empty job list"; return out
+        out.update(active=True, job_count=len(jobs),
+                   sample_titles=[_job_title(j) for j in jobs[:3]])
         return out
     # json kinds
     data = resp.json()

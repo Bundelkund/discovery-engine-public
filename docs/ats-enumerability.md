@@ -16,9 +16,10 @@ that domain returns the customer slugs directly — no per-board crawling.
 | breezy | subdomain | breezy.hr | 1289 | 756 | `{slug}.breezy.hr/json` (json list) | global; feed serves bots fine — empty `[]` = no open jobs (inactive) |
 | personio | subdomain | jobs.personio.de | 1018 | 660 | `{slug}.jobs.personio.de/xml` (`<position>`) | **DE-only TLD** → DE-leaning; reference provider |
 | factorial | subdomain | factorialhr.com | 222 | 141 | `{slug}.factorialhr.com/sitemap.xml` (`/job_posting/` locs) | `.com` only; **no JSON API → sitemap.xml is the feed** |
+| softgarden | subdomain | career.softgarden.de | 104 | 98 | `{slug}.career.softgarden.de/jobs.json` (schema.org `DataFeed`) | **DE-only TLD** → DE-leaning; jobs under `dataFeedElement[].item` |
 | **lever** | path | jobs.lever.co | **0** | **0** | — | **robots-blocked** — CC indexed only `jobs.lever.co/robots.txt` |
 
-6/7 CC-enumerable; lever is not. **~8300 raw slugs → 5915 active feeds.**
+7/8 CC-enumerable; lever is not. **~8400 raw slugs → 6013 active feeds.**
 
 ### DE classification (`de_flag`, derived in the validate pass — see [ats-pipeline.md](ats-pipeline.md))
 
@@ -31,11 +32,12 @@ that domain returns the customer slugs directly — no per-board crawling.
 | recruitee | 902 | 269 | 0 | 269 | 633 |
 | personio | 660 | 497 | 33 | 530 | 130 |
 | breezy | 756 | 23 | 0 | 23 | 733 |
+| softgarden | 98 | 95 | 0 | 95 | 3 |
 | factorial | 141 | — | — | — | — |
-| **TOTAL** | **5915** | **1162** | **744** | **1906** | **3868** |
+| **TOTAL** | **6013** | **1257** | **744** | **2001** | **3871** |
 
 ISO providers (recruitee, breezy) → exact country code, remote-nc≈0. factorial sitemap
-carries no location → `de_flag` null (unknown via feed). True DE ∈ [1162 strict, 1906 incl. remote].
+carries no location → `de_flag` null (unknown via feed). True DE ∈ [1257 strict, 2001 incl. remote].
 
 ### Feed-endpoint corrections (validation pass)
 
@@ -57,9 +59,13 @@ carries no location → `de_flag` null (unknown via feed). True DE ∈ [1162 str
 
 ## Still to verify (new ATS, T2 `ats-enum-matrix`)
 
-softgarden (`{slug}.career.softgarden.de`, DE, P1), teamtailor, workable, smartrecruiters,
-and custom-domain candidates (concludis, d.vinci, rexx, onlyfy/Prescreen — likely
-per-customer domains → not CC-enumerable, needs CDX probe).
+teamtailor, workable, smartrecruiters, and custom-domain candidates (concludis, d.vinci,
+rexx, onlyfy/Prescreen — likely per-customer domains → not CC-enumerable, needs CDX probe).
+
+**softgarden — verified** (added above): `career.softgarden.de` is CC-enumerable (subdomain
+mode); `/jobs.json` serves a schema.org `DataFeed` (200, bot-friendly) with full `JobPosting`
+items (title, url, description, `jobLocation.address`). DE-only TLD → 95/98 active boards
+classify `de` directly off `addressCountry`.
 
 ## Reproduce
 
