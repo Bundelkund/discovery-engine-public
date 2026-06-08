@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Discovery Engine — wie die neue Version funktioniert</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --mut:#8b97a7;
+    --line:#2d3543;
+    --ingest:#3b82f6; --refine:#a855f7; --match:#22c55e;
+    --store:#0ea5e9; --decision:#f59e0b; --warn:#ef4444; --ok:#22c55e; --raw:#f59e0b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;padding:28px;max-width:1280px;margin:0 auto}
+  h1{font-size:23px;margin:0 0 4px}
+  .sub{color:var(--mut);margin:0 0 18px;font-size:13.5px}
+  .tech{font-family:ui-monospace,monospace;font-size:11px;color:#6b7785}
+
+  .meta{background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--decision);border-radius:10px;padding:13px 16px;margin-bottom:22px;font-size:13.5px}
+  .meta b{color:#fcd34d}
+
+  .legend{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:22px;font-size:12.5px;color:var(--mut)}
+  .legend b{color:var(--ink)}
+  .chip{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .di{width:19px;height:19px;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;background:var(--decision);color:#1a1206;font-weight:700;font-size:11px;flex:0 0 auto}
+
+  .pipe{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:8px}
+  .phase{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;position:relative}
+  .phase.ingest{border-top:3px solid var(--ingest)}
+  .phase.refine{border-top:3px solid var(--refine)}
+  .phase.match{border-top:3px solid var(--match)}
+  .phase h2{font-size:15px;margin:0 0 2px;display:flex;align-items:center;gap:8px}
+  .phase .tag{font-size:12px;color:var(--mut);margin:0 0 12px;min-height:32px}
+  .pill{font-size:10.5px;padding:2px 9px;border-radius:20px;font-weight:600;white-space:nowrap}
+  .pill.glob{background:rgba(168,85,247,.18);color:#d8b4fe}
+  .pill.once{background:rgba(59,130,246,.18);color:#93c5fd}
+  .pill.tenant{background:rgba(34,197,94,.18);color:#86efac}
+
+  .step{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin:7px 0;font-size:13px;position:relative}
+  .step b{font-weight:600}
+  .step small{color:var(--mut);display:block;margin-top:2px;font-size:11.5px}
+  .step .badge{position:absolute;top:-9px;right:-9px}
+
+  .arrow{text-align:center;color:var(--mut);font-size:17px;margin:1px 0}
+  .src{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
+  .src span{font-size:10.5px;background:#0b1220;border:1px solid var(--line);border-radius:5px;padding:2px 6px;color:var(--mut)}
+
+  .store{margin:10px 0;padding:11px 13px;border-radius:10px;border:1px solid var(--store);background:linear-gradient(180deg,rgba(14,165,233,.16),rgba(14,165,233,.05));position:relative}
+  .store.raw{border-color:var(--raw);background:linear-gradient(180deg,rgba(245,158,11,.16),rgba(245,158,11,.05))}
+  .store .name{font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .store .desc{font-size:12px;color:#cdd6e0;margin-top:4px}
+  .store .badge{position:absolute;top:-9px;right:-9px}
+
+  .smachine{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;margin-top:8px}
+  .sm{padding:2px 9px;border-radius:14px;border:1px solid var(--line);background:#0b1220}
+  .sm.new{border-color:var(--raw);color:#fcd34d}
+  .sm.ok{border-color:var(--ok);color:#86efac}
+  .sm.bad{border-color:var(--warn);color:#fca5a5}
+
+  .flowrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin:2px 0 24px}
+  .flowrow div{text-align:center;color:var(--mut);font-size:11.5px;font-style:italic}
+
+  .deck{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px}
+  .card h3{margin:0 0 8px;font-size:14px;display:flex;align-items:flex-start;gap:9px;line-height:1.35}
+  .card p{margin:5px 0;font-size:13px;color:#cdd6e0}
+  .card .imp{color:#86efac;font-size:12.5px;margin-top:7px}
+  .card .risk{color:#fca5a5;font-size:12.5px}
+  .open{border-left:3px solid var(--decision)}
+  .done{border-left:3px solid var(--ok)}
+  .opentag{font-size:10px;color:#fcd34d;border:1px solid #5a4410;background:rgba(245,158,11,.12);border-radius:10px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+  .donetag{font-size:10px;color:#86efac;border:1px solid #1c5232;background:rgba(34,197,94,.12);border-radius:10px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+
+  .adwrap{margin-top:28px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:10px;background:var(--panel);border-radius:12px;overflow:hidden}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);font-size:11px;letter-spacing:.4px;color:var(--mut);text-transform:uppercase}
+  td.opt{font-weight:700}
+  .rec{background:rgba(34,197,94,.10)}
+  .rec td.opt{color:#86efac}
+  .y{color:#86efac;font-weight:600}
+  .n{color:#fca5a5;font-weight:600}
+  .mark{font-size:11px;color:var(--mut)}
+  .section-h{font-size:16px;margin:34px 0 4px;border-left:3px solid var(--refine);padding-left:11px}
+  .note{font-size:13px;color:#cdd6e0;max-width:920px}
+  .note .mut{color:var(--mut)}
+  .hl{color:var(--decision);font-weight:600}
+  footer{margin-top:34px;color:var(--mut);font-size:11.5px;border-top:1px solid var(--line);padding-top:12px}
+</style>
+</head>
+<body>
+
+<h1>Discovery Engine — wie die neue Version arbeitet</h1>
+<p class="sub">Ein System, das Stellenanzeigen aus vielen Quellen einsammelt, aufräumt und jeder Person die passenden zeigt.</p>
+
+<div class="meta">
+  🏭 <b>Bild dazu:</b> Stell dir ein <b>Lager</b> vor. Zuerst wird <b>alles</b> reingetragen, was reinkommt (nichts wird vorab weggeworfen). Dann wird <b>einmal für alle</b> aufgeräumt — Doppeltes raus, fehlende Infos ergänzt, ordentlich ins Regal. Erst ganz am Ende bekommt <b>jede Person ihre eigene Auswahl</b> aus dem sauberen Regal. Die drei Schritte laufen getrennt — wenn eine Quelle hakt, läuft der Rest weiter.
+</div>
+
+<div class="legend">
+  <span class="chip"><span class="dot" style="background:var(--ingest)"></span><b>1 · Einsammeln</b> (pro Quelle)</span>
+  <span class="chip"><span class="dot" style="background:var(--refine)"></span><b>2 · Aufräumen</b> (einmal für alle)</span>
+  <span class="chip"><span class="dot" style="background:var(--match)"></span><b>3 · Zuordnen</b> (pro Person)</span>
+  <span class="chip"><span class="dot" style="background:var(--store)"></span>Lager / Speicher</span>
+  <span class="chip"><span class="di">?</span>Wichtige Entscheidung</span>
+</div>
+
+<!-- ===================== PIPELINE ===================== -->
+<div class="pipe">
+
+  <!-- INGEST -->
+  <div class="phase ingest">
+    <h2>① Einsammeln <span class="pill once">pro Quelle · stündlich</span></h2>
+    <p class="tag">Holt Stellenanzeigen von überall — und hebt <b>alles</b> auf, ungeprüft.</p>
+
+    <div class="src">
+      <span>greenhouse</span><span>ashby</span><span>lever</span><span>personio</span>
+      <span>adzuna*</span><span>jooble*</span><span>arbeitsagentur</span><span>indeed*</span><span>+7</span>
+    </div>
+    <small style="color:var(--mut);font-size:10.5px">* diese Quellen muss man mit Suchwörtern fragen (wichtig für Punkt <span class="di" style="width:14px;height:14px;font-size:9px">7</span>)</small>
+
+    <div class="arrow">↓ holen</div>
+    <div class="step">
+      <b>Fingerabdruck berechnen</b>
+      <small>Eine kurze Kennung aus Link + Titel + Firma. Damit erkennt das System sofort, ob zwei Anzeigen <i>exakt</i> gleich sind — ohne den ganzen Text zu vergleichen.</small>
+      <span class="tech">content_hash</span>
+    </div>
+    <div class="arrow">↓ alles ablegen</div>
+
+    <div class="store raw">
+      <span class="badge di">1</span>
+      <div class="name">📦 Rohlager <span class="pill once">nur dazulegen, nie löschen</span></div>
+      <div class="desc">Jede Anzeige landet <b>komplett und unverändert</b> hier — so wie sie reinkam. Noch nicht aufgeteilt, noch nichts aussortiert.</div>
+      <div class="smachine">
+        Stempel:
+        <span class="sm new">neu</span> →
+        <span class="sm ok">aufgeräumt</span>
+        <span class="sm bad">aussortiert</span>
+        <span class="sm bad">doppelt</span>
+      </div>
+      <span class="tech">Tabelle: raw_jobs</span>
+    </div>
+    <small style="color:var(--mut);font-size:11.5px">Weil nichts weggeworfen wird, kann man später jederzeit nochmal draufschauen oder neu bewerten.</small>
+  </div>
+
+  <!-- REFINE -->
+  <div class="phase refine">
+    <h2>② Aufräumen <span class="pill glob">einmal für alle · alle 30 Min</span></h2>
+    <p class="tag">Macht das Lager sauber. Das Ergebnis ist für <b>jede Person gleich</b> — also nur <b>einmal</b> Arbeit.</p>
+
+    <div class="step"><b>Nimmt sich alle „neuen" Anzeigen vor</b></div>
+    <div class="arrow">↓</div>
+    <div class="step"><b>Anzeige aufteilen</b><span class="badge di">2</span><small>Aus dem Rohpaket einzelne Felder ziehen: Titel, Ort, Beschreibung, Gehalt …</small></div>
+    <div class="arrow">↓</div>
+    <div class="step"><b>Exakte Doppel rauswerfen</b><small>Gleicher Fingerabdruck → schon da → weg.</small></div>
+    <div class="arrow">↓</div>
+    <div class="step"><b>Fehlende Beschreibungen nachladen</b><small>Wenn nur ein Link da ist, Text von der Original-Seite holen.</small></div>
+    <div class="arrow">↓</div>
+    <div class="step" style="border-color:var(--decision)"><b>Fast-gleiche Doppel finden</b><span class="badge di">3</span><small>Selber Job über zwei Portale, leicht anderer Text. Heute merkt sich das System das nur kurz im Arbeitsspeicher — siehe A–D unten.</small></div>
+    <div class="arrow">↓</div>
+    <div class="step"><b>Ortsangaben vereinheitlichen</b><small>„Munich" / „München" / „81675" → ein sauberer Ort.</small></div>
+    <div class="arrow">↓</div>
+    <div class="step"><b>Qualitäts-Check</b><small>Unvollständiges oder Müll markieren.</small></div>
+    <div class="arrow">↓ sauber einräumen</div>
+
+    <div class="store">
+      <span class="badge di">4</span>
+      <div class="name">🗂 Sauberes Regal <span class="pill glob">für alle gleich</span></div>
+      <div class="desc">Jeder <b>echte</b> Job genau einmal, ordentlich aufgeteilt und geprüft. Das ist der wertvolle, teuer erarbeitete Bestand.</div>
+      <span class="tech">Tabelle: jobs</span>
+    </div>
+    <div class="step" style="background:transparent;border-style:dashed">
+      <span class="badge di">5</span>
+      <b>„Zuerst gesehen" + „Zuletzt gesehen" merken</b>
+      <small>Taucht ein Job wieder auf → Datum aktualisieren. Verschwindet er → als <b>abgelaufen</b> markieren. So weiß das System, ob eine Stelle noch offen ist.</small>
+    </div>
+  </div>
+
+  <!-- MATCH -->
+  <div class="phase match">
+    <h2>③ Zuordnen <span class="pill tenant">pro Person · alle 30 Min</span></h2>
+    <p class="tag">Der <b>einzige</b> Schritt, der für jede Person <b>anders</b> ausfällt.</p>
+
+    <div class="step"><b>Nimmt das saubere Regal</b><small>nur Jobs, die diese Person noch nicht gesehen hat</small></div>
+    <div class="arrow">↓</div>
+
+    <div class="step" style="border-color:var(--match)">
+      <span class="badge di">6</span>
+      <b>Für jede Person einzeln</b>
+      <small>Läuft heute über 1 Person, morgen über 5 — gleicher Ablauf, kein Sonderfall. Ein eigener Zeitplan pro Person kommt erst, wenn es viele werden.</small>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="step"><b>Passt der Job zu den Suchwünschen?</b><small>Punkte vergeben nach Stichwörtern & Job-Typ. Wunschprofil kommt aus dem Nutzer-Konto.</small></div>
+    <div class="arrow">↓</div>
+    <div class="step"><b>Ab genug Punkten = Treffer</b><small>Jede Person hat ihre eigene Schwelle.</small></div>
+    <div class="arrow">↓ Trefferliste füllen</div>
+
+    <div class="store" style="border-color:var(--match);background:linear-gradient(180deg,rgba(34,197,94,.14),rgba(34,197,94,.04))">
+      <div class="name">✅ Persönliche Trefferliste <span class="pill tenant">pro Person</span></div>
+      <div class="desc">Welcher Job für welche Person wie gut passt — mit Begründung. Eine Zeile je Job &amp; Person.</div>
+      <span class="tech">Tabelle: matches</span>
+    </div>
+    <small style="color:var(--mut);font-size:11.5px">Kommt eine neue Person dazu, wird sie einfach gegen das vorhandene Regal abgeglichen — <b>ohne alles neu einzusammeln</b>.</small>
+  </div>
+</div>
+
+<div class="flowrow">
+  <div>↑ Quelle kann das Zuordnen nicht aufhalten</div>
+  <div>↑ teure Arbeit, einmal für alle</div>
+  <div>↑ billig, für jede Person anders</div>
+</div>
+
+<!-- ===================== DECISION CARDS ===================== -->
+<div class="section-h">Die wichtigen Weichenstellungen</div>
+<p class="note">Jeder <span class="di" style="width:15px;height:15px;font-size:9px">?</span> ist eine bewusste Entscheidung darüber, <b>wie mit den Daten umgegangen wird</b> — kein technisches Klein-Klein. <span class="opentag">offen</span> = noch nicht entschieden, sollte vor dem Bauen geklärt werden.</p>
+
+<div class="deck">
+  <div class="card">
+    <h3><span class="di">1</span> Erst alles aufheben, dann aussortieren</h3>
+    <p>Früher wurde sofort weggeworfen, was nicht passte — weg war weg. Jetzt landet erst <b>alles</b> im Rohlager.</p>
+    <p class="imp">+ Vorteil: nichts geht verloren. Man kann später neu bewerten, nachzählen, Fehler nachvollziehen.</p>
+  </div>
+
+  <div class="card open">
+    <h3><span class="di">2</span> Anzeige am Stück aufheben statt sofort zerlegen <span class="opentag">offen</span></h3>
+    <p>Jede Anzeige hat <b>9 einheitliche Felder</b> (Titel, Link, Firma, Ort, Beschreibung, Gehalt …) <b>+ die komplette Original-Antwort der Quelle</b>. Erst beim Aufräumen wird in Spalten zerlegt.</p>
+    <p class="imp">+ Vorteil: braucht später jemand ein Feld, das wir früher ignoriert haben — es steht noch im Original.</p>
+    <p style="font-size:12px;background:#0b1220;border:1px solid var(--line);border-radius:7px;padding:8px;margin-top:7px">
+      <b>Original sieht je Quelle anders aus:</b><br>
+      • <b>Firmen-Portale</b> (Greenhouse &amp; Co.) → reich: voller Beschreibungstext, Abteilung, stabile ID.<br>
+      • <b>Sammel-Portale</b> (Adzuna &amp; Co.) → flacher: Weiterleitungs-Link, oft nur Kurztext, mit Gehalt.
+    </p>
+    <p class="risk">⚠ Heute inkonsistent: Firmen-Portale legen das Original ab, <b>Adzuna lässt es leer</b>. → beim Umbau: jede Quelle muss ihr volles Original ablegen, sonst trägt das „alles aufheben" nicht.</p>
+  </div>
+
+  <div class="card done">
+    <h3><span class="di">3</span> Wo merkt sich das System bekannte Jobs? <span class="donetag">entschieden: A + D</span></h3>
+    <p>Heute liegt das Gedächtnis nur im <b>Arbeitsspeicher</b> → nach Neustart vergessen, parallele Läufe blind füreinander.</p>
+    <p class="imp">→ <b>A:</b> Gedächtnis wandert in den dauerhaften Speicher (Datenbank). <b>D:</b> nur die letzten Wochen merken (alte Jobs laufen eh ab). Der alte Spezial-Code wird überflüssig. Details in der Tabelle unten.</p>
+  </div>
+
+  <div class="card done">
+    <h3><span class="di">4</span> Altes Regal umbauen oder neues danebenstellen? <span class="donetag">entschieden: Weg B</span></h3>
+    <p>Das heutige Regal ist für <b>eine</b> Person gebaut und nur zum Dazulegen. Das neue muss „für alle gleich" + Lebenslauf je Job können.</p>
+    <p><b>→ Weg B:</b> neues Regal daneben bauen, altes läuft parallel weiter, Daten rüberkopieren, vergleichen, dann automatisch per Stichtag umschalten, erst dann altes löschen.</p>
+    <p class="imp">+ Jeder Schritt einzeln rückrollbar, App hakt nie. Langsamer — aber Sicherheit zählt, Tempo nicht.</p>
+  </div>
+
+  <div class="card">
+    <h3><span class="di">5</span> „Noch offen oder schon weg?" merken</h3>
+    <p>Ein Job ist ein <b>Zustand</b>, kein einmaliges Ereignis. Das System merkt sich, wann es ihn zuletzt gesehen hat.</p>
+    <p class="imp">+ Vorteil: erkennt automatisch, wenn eine Stelle nicht mehr ausgeschrieben ist (früher unmöglich).</p>
+  </div>
+
+  <div class="card open">
+    <h3><span class="di">6</span> Pro-Person-Auswahl jetzt · eigener Zeitplan später <span class="opentag">offen</span></h3>
+    <p><b>Jetzt bauen:</b> die getrennte Trefferliste pro Person — und den Ablauf, der über alle Personen läuft.</p>
+    <p><b>Später:</b> jeder Person einen eigenen Zeitplan geben — lohnt erst bei vielen Nutzern.</p>
+    <p class="imp">+ Vorteil: neue Person funktioniert sofort, nur die Feinsteuerung wächst später mit.</p>
+  </div>
+
+  <div class="card done" style="grid-column:1/-1">
+    <h3><span class="di">7</span> Suchwörter gehören einer Person — und sind löschbar <span class="donetag">entschieden</span></h3>
+    <p>Einige Quellen (Adzuna, Jooble, Indeed, LinkedIn) muss man <b>mit Suchwörtern fragen</b> — das passiert schon beim Einsammeln. Ein Job, nach dem nie gesucht wurde, liegt gar nicht erst im Lager.</p>
+    <p><b>→ So gelöst:</b> Jedes Suchwort <b>gehört einer Person</b> (eigene kleine Liste <span class="tech">search_terms</span>). Eingesammelt wird mit allen Suchwörtern aller Personen zusammen. Nutzen zwei dasselbe Wort → einmal gefragt, zwei Besitzer.</p>
+    <p class="imp">+ Person löscht ihr Wort / wird gelöscht → ihr Eintrag weg → Wort wird nur weiter geholt, wenn eine <b>andere</b> Person es noch hat, sonst fällt es automatisch raus. Sauber zuordenbar + löschbar (DSGVO).</p>
+    <p class="mut" style="font-size:12px">Nur tatsächliche Nutzer ergänzen Suchwörter. Ein paar Tage Verzögerung bis ein neues Wort greift = ok (Firmen-Portale zeigen ohnehin sofort eine breite Auswahl).</p>
+  </div>
+</div>
+
+<!-- ===================== A-D TABLE ===================== -->
+<div class="adwrap">
+  <div class="section-h" style="border-color:var(--decision)">Weichenstellung ③ genauer — das Gedächtnis für „Fast-Doppel"</div>
+  <p class="note"><span class="mut">Worum es geht:</span> Derselbe Job taucht oft über mehrere Portale auf, mit leicht anderem Text. Um das zu erkennen, braucht das System ein Gedächtnis aller schon gesehenen Jobs. Die vier Optionen unterscheiden sich nur darin: <b>wo dieses Gedächtnis liegt</b> — und davon hängt ab, ob es einen Neustart übersteht.</p>
+
+  <table>
+    <thead>
+      <tr><th>Option</th><th>Wo liegt das Gedächtnis</th><th>übersteht Neustart?</th><th>mehrere Läufe gleichzeitig sicher?</th><th>macht alten komplizierten Teil überflüssig?</th><th>Haken</th></tr>
+    </thead>
+    <tbody>
+      <tr class="rec">
+        <td class="opt">A · in der Datenbank<br><span class="mark">(empfohlen)</span></td>
+        <td>direkt im dauerhaften Speicher (Datenbank-Suche nach ähnlichem Text)</td>
+        <td class="y">ja</td><td class="y">ja</td><td class="y">ja ✂</td>
+        <td>findet Ähnlichkeit etwas anders → einmal nachjustieren; bei sehr langen Texten etwas langsamer</td>
+      </tr>
+      <tr>
+        <td class="opt">B · eigenes Gedächtnis-Programm</td>
+        <td>ein extra Dienst nur fürs Merken</td>
+        <td class="y">ja</td><td class="y">ja</td><td class="n">nein</td>
+        <td>ein zusätzliches Teil, das laufen und gewartet werden muss</td>
+      </tr>
+      <tr>
+        <td class="opt">C · jedes Mal frisch aufbauen</td>
+        <td>kurz im Arbeitsspeicher, vor jedem Lauf neu aus dem Regal geladen</td>
+        <td class="mark">entfällt (immer frisch)</td><td class="y">ja</td><td class="n">nein</td>
+        <td>je größer das Regal, desto langsamer der Start jedes Laufs</td>
+      </tr>
+      <tr>
+        <td class="opt">D · nur die letzten Wochen merken<br><span class="mark">(Verstärker)</span></td>
+        <td>egal wo — nur ein kurzer Zeitraum</td>
+        <td class="mark">+</td><td class="mark">+</td><td class="mark">+</td>
+        <td>keine Lösung für sich; mit A oder C kombiniert hält es das Gedächtnis klein (alte Jobs laufen eh ab)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="note" style="margin-top:12px">
+    <b>Empfehlung A + D:</b> Das Gedächtnis wandert vom flüchtigen Arbeitsspeicher in den <b>dauerhaften Speicher</b> — genau passend dazu, dass jetzt sowieso „erst alles aufheben" gilt. Der alte, komplizierte Spezial-Code wird überflüssig und kann weg. Exakte Doppel fängt die Datenbank ohnehin selbst ab. Braucht man später doch mehr Genauigkeit → Variante <b>C + D</b> (statt des extra Dienstes B).
+  </p>
+</div>
+
+<!-- ===================== KERN ===================== -->
+<div class="section-h">Der Kern-Unterschied in einem Satz</div>
+<p class="note">
+<b>Früher:</b> alles wurde sofort durchgefiltert, nur die „Gewinner" blieben übrig — der Rest war für immer weg, und das galt nur für eine Person.<br>
+<b>Jetzt:</b> erst <b>alles aufheben</b> → einmal <b>für alle aufräumen</b> → für <b>jede Person passend zuordnen</b>. Genau die Trennung „für alle gleich" gegen „pro Person" ist der Schlüssel, der Mehr-Nutzer überhaupt möglich macht.
+</p>
+
+<footer>
+  Discovery Engine · neue Version (Überblick) · Umbau im bestehenden Projekt · Stand 2026-06-08 · Dies ist ein Überblicks-Bild, kein Bauplan (genaue Reihenfolge & Details folgen später)
+</footer>
+
+</body>
+</html>
