@@ -291,8 +291,8 @@ tasks:
       discovery-engine.konektos.de/scan/discover-lever, X-API-Key=N8N. INAKTIV angelegt.
       Smoke lokal: 202->409-lock->done, fetch/scanner/seed rc=0, seed_summary "0 inserted, 49 updated".
       da859bb LIVE in prod (auto-deployed ~360s, /health softgarden gruen -> scan.py discover-lever +
-      db-slugs aktiv). OFFEN (User, 2 Schritte): (1) THEIRSTACK_API_KEY in Coolify-Env setzen (sonst
-      failt discover-lever-fetch wenn WF feuert). (2) n8n WF wC41eZ0xxYGLRVlA aktivieren (monthly 8th).
+      db-slugs aktiv). User-Schritte ERLEDIGT (2026-06-08): (1) THEIRSTACK_API_KEY in Coolify-Env gesetzt.
+      (2) n8n WF wC41eZ0xxYGLRVlA aktiviert (monthly 8th).
 
   - id: progressive-enrichment
     epic: ats-registry
@@ -309,7 +309,7 @@ tasks:
 
   - id: engine-recall-ranking
     title: GET /jobs Relevanz-Ranking (ts_rank) — Recall-Blocker E1 + Phrase-Bug E2
-    status: in_progress
+    status: done
     priority: P0
     depends_on: []
     detail: >
