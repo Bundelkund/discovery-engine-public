@@ -136,7 +136,7 @@ def test_keywords_positive_filter(client):
 
 
 def test_keywords_positive_filter_repo_logic():
-    """Unit-test: query() builds correct ILIKE OR chain for keywords_positive."""
+    """Unit-test: query() builds correct token-FTS (wfts) OR chain for keywords_positive."""
     from unittest.mock import MagicMock
 
     mock_client = MagicMock()
@@ -158,10 +158,10 @@ def test_keywords_positive_filter_repo_logic():
     repo = JobRepository(mock_client)
     rows, total = asyncio.run(repo.query(keywords_positive=["python"]))
     assert total == 1
-    # Verify .or_() was called with ILIKE pattern
+    # Verify .or_() was called with token-FTS (wfts) pattern, not substring ILIKE
     call_args = mock_client.table.return_value.select.return_value.or_.call_args
-    assert "title.ilike.%python%" in call_args[0][0]
-    assert "description.ilike.%python%" in call_args[0][0]
+    assert "title.wfts(simple).python" in call_args[0][0]
+    assert "description.wfts(simple).python" in call_args[0][0]
 
 
 # ---------------------------------------------------------------------------

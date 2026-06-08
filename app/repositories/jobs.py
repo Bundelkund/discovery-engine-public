@@ -168,18 +168,32 @@ class JobRepository(BaseRepository):
 
         # -- MUST filters (AC-001) --
 
-        # keywords_positive: keep rows where ANY keyword ilike-matches title OR description
+        # keywords_positive: keep rows where ANY keyword token-matches title OR
+        # description. Token FTS (config 'simple') via PostgREST wfts, NOT substring
+        # ILIKE: `title.wfts(simple).term` -> `to_tsvector('simple', title) @@
+        # websearch_to_tsquery('simple', term)`, resolved by the FTS GIN indexes
+        # (migrations/jobs-fts-index.sql). The planner rejected the trgm index for
+        # low-selectivity multi-term ORs and reverted to a ~5s Seq Scan -> /jobs 500
+        # at the 8s statement_timeout; FTS keeps it a sub-300ms BitmapOr.
+        # Semantics: token-boundary, not substring ('coaching' no longer matches
+        # token 'coach'). 'simple' config = tokenize+lowercase, no stemming/stopwords.
         if keywords_positive:
-            # Sanitize to prevent PostgREST operator injection
-            def _safe(k: str) -> str:
-                return k.replace(",", " ").replace("(", "").replace(")", "").replace(".", " ")
+            # PostgREST or_ list is comma/paren/dot-delimited; strip those so the
+            # remaining term reaches websearch_to_tsquery (which tolerates the rest).
+            def _fts(k: str) -> str:
+                return (
+                    k.replace(",", " ").replace("(", " ").replace(")", " ").replace(".", " ").strip()
+                )
 
             or_parts = []
             for kw in keywords_positive:
-                safe = _safe(kw)
-                or_parts.append(f"title.ilike.%{safe}%")
-                or_parts.append(f"description.ilike.%{safe}%")
-            q = q.or_(",".join(or_parts))
+                safe = _fts(kw)
+                if not safe:
+                    continue
+                or_parts.append(f"title.wfts(simple).{safe}")
+                or_parts.append(f"description.wfts(simple).{safe}")
+            if or_parts:
+                q = q.or_(",".join(or_parts))
 
         # keywords_negative: exclude rows matching any keyword in title OR description.
         # supabase-py v2 has no native NOT-OR — we apply each negative keyword
