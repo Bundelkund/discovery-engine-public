@@ -62,6 +62,25 @@ epics:
         verify:          "concludis, d.vinci, rexx, onlyfy/Prescreen — custom-domain? CDX-Test noetig"
 
 tasks:
+  - id: tenant-module-integration
+    title: Tenant-Modul-Anbindung — Engine bleibt agnostischer jobs-Provider (Draht-2)
+    status: backlog
+    priority: P1
+    depends_on: []
+    detail: >
+      Neues Tenant-Modul (github/tenant-module, eigener Service Port 8092, eigenes
+      Postgres-Schema `tenant` im Projekt guocdgjpbvsvcvchgolm) wird alleiniger Owner
+      aller personenbezogenen Job-Daten (tenant.profiles / tenant.matches, loest
+      public.profiles / public.user_job_data ab). Es liest neue Jobs NUR via GET /jobs
+      (Draht-2, HTTP, read-only) aus dem agnostischen jobs_v2-Regal und scored je Profil.
+      Engine-Pflichten: (1) jobs_v2 + GET /jobs stabil als Match-Loop-Quelle halten;
+      (2) Agnostik-Invariante wahren — KEIN profile_id / kein Person-Score zurueck in die
+      Engine; (3) jobs_v2-Cutover (JOBS_TABLE) so takten, dass Consumer auf Tenant-API/
+      -Schema wechseln, NICHT auf anon-SQL. Engine besitzt public.profiles /
+      public.user_job_data NICHT -> vom Daten-Move nicht direkt betroffen, aber
+      Cutover-Sequencing mit Tenant-Live + WA-DE-07 / WA-TEN-01 abstimmen.
+    acceptance: "GET /jobs + jobs_v2 als Tenant-Match-Loop-Quelle dokumentiert; kein profile_id in Engine (verify_no_profile_id.sh exit 0); Cutover-Runbook referenziert Tenant-Live."
+
   - id: ats-scanner
     epic: ats-registry
     title: Generalisierter ATS-Scanner (provider-pluggbar) aus enumerate_personio.py
