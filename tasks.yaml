@@ -81,6 +81,31 @@ tasks:
       Cutover-Sequencing mit Tenant-Live + WA-DE-07 / WA-TEN-01 abstimmen.
     acceptance: "GET /jobs + jobs_v2 als Tenant-Match-Loop-Quelle dokumentiert; kein profile_id in Engine (verify_no_profile_id.sh exit 0); Cutover-Runbook referenziert Tenant-Live."
 
+  - id: jobs-fts-search
+    title: FTS (tsvector+GIN) fuer /jobs keyword-Filter — ILIKE-Seq-Scan abloesen
+    status: backlog
+    priority: P1
+    depends_on: []
+    detail: >
+      Tenant live-test (2026-06-08): /jobs 500 bei Profilen mit >=4 search-terms.
+      keywords_positive filtert als title/description ILIKE '%term%'. Sofort-Fix war
+      pg_trgm GIN (migrations/jobs-trgm-index.sql, live appliziert) -> 4-Term-Query
+      6625ms -> 3305ms, unter dem 8s statement_timeout (500 weg). ABER das Residual
+      ~3.3s ist inhaerent: trgm GIN ist lossy -> der Bitmap-Heap-Recheck fuehrt ILIKE
+      auf ~6000 grosse description-Texte nochmal aus (z.B. 'berater' = 52% aller
+      descriptions). count="exact" via COUNT(*) OVER() + ORDER BY scraped_at DESC
+      erzwingen volle Materialisierung -> count="planned" bringt hier NICHTS.
+      Struktureller Sub-100ms-Fix: tsvector-Spalte (GENERATED ALWAYS, config 'german',
+      title||description) + GIN auf jobs_v2; query() (app/repositories/jobs.py:~213)
+      fuer keywords_positive von ILIKE auf websearch_to_tsquery/to_tsquery umbauen.
+      Token-basiert -> kein Heap-Recheck.
+      ACHTUNG SEMANTIK-CHANGE (Florian-Entscheid noetig, kein stiller Umbau):
+      Substring -> Token. ILIKE '%berater%' trifft heute innerhalb 'Unternehmensberater';
+      FTS-Token 'berater' (gestemmt) nicht. Weniger Noise, anderer Recall. Auf jobs_v2
+      bauen (Zielregal), nicht v1. keywords_negative + SHOULD-Filter (location/salary/
+      distance/source) bleiben unveraendert. Verzahnt mit tenant-module-integration.
+    acceptance: "jobs_v2.search_tsv GENERATED + GIN-Index; query() nutzt FTS statt ILIKE fuer keywords_positive; 4-Term-Query <200ms (EXPLAIN ANALYZE); Substring->Token-Semantik mit Florian bestaetigt."
+
   - id: ats-scanner
     epic: ats-registry
     title: Generalisierter ATS-Scanner (provider-pluggbar) aus enumerate_personio.py
