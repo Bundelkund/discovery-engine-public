@@ -42,6 +42,7 @@ class IndeedScraper(BaseScraper):
                         salary=str(row.get("compensation", "")),
                         source="indeed",
                         external_id=str(row.get("id", "")),
+                        raw_data=row.to_dict(),
                     )
                     all_jobs.append(raw)
             logger.info(f"Indeed: fetched {len(all_jobs)} jobs")

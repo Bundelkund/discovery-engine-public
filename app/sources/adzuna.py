@@ -55,6 +55,7 @@ class AdzunaScraper(BaseScraper):
                             salary=str(result.get("salary_min", "")),
                             source="adzuna",
                             external_id=str(result.get("id", "")),
+                            raw_data=result,
                         )
                         all_jobs.append(raw)
 

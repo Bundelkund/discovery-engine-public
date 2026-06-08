@@ -48,6 +48,7 @@ class RssScraper(BaseScraper):
                                 "id", entry.get("link", "")
                             ),
                             posted_at=posted_at,
+                            raw_data=dict(entry),
                         )
                         all_jobs.append(raw)
                 except Exception as e:
