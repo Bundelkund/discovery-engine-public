@@ -7,7 +7,6 @@ only touch status='new' rows (idempotency).
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from app.models.job import NormalizedJob, ScoredJob
 from app.services.refine_pipeline import (
     DUPLICATE,
     REFINED,
@@ -71,8 +70,8 @@ def _make_pipeline() -> RefinePipeline:
 
     p.profile = ScoringProfile(id="")
 
-    # upsert + enrich succeed / no-op
-    p.job_repo.upsert = AsyncMock(return_value=0)
+    # upsert returns a per-row success flag list (default: all rows succeed)
+    p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True] * len(jobs))
     p._enrich = AsyncMock()
 
     return p

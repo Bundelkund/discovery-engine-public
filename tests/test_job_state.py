@@ -5,10 +5,8 @@ upsert:  first insert sets first_seen_at = last_seen_at = now(), status='active'
 re-upsert: updates last_seen_at; does NOT overwrite first_seen_at.
 mark_expired: sets status='expired' for rows not seen since threshold_days.
 """
-import asyncio
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import MagicMock
 
 from app.models.job import ScoredJob
 from app.repositories.jobs import JobRepository
@@ -48,9 +46,9 @@ async def test_upsert_includes_last_seen_at():
 
     repo.client.table.return_value.upsert = _fake_upsert
 
-    count = await repo.upsert([_scored_job()])
+    result = await repo.upsert([_scored_job()])
 
-    assert count == 1
+    assert result == [True]  # per-row success flag list (new contract)
     assert len(upserted_rows) == 1
     assert "last_seen_at" in upserted_rows[0], "last_seen_at must be set on every upsert"
 
@@ -120,13 +118,13 @@ async def test_upsert_no_profile_id_in_row():
 
 
 @pytest.mark.asyncio
-async def test_upsert_empty_list_returns_zero():
-    """upsert([]) must return 0 without calling the DB."""
+async def test_upsert_empty_list_returns_empty():
+    """upsert([]) must return [] without calling the DB."""
     repo = _make_repo()
 
-    count = await repo.upsert([])
+    result = await repo.upsert([])
 
-    assert count == 0
+    assert result == []
     repo.client.table.assert_not_called()
 
 
@@ -139,8 +137,6 @@ async def test_upsert_empty_list_returns_zero():
 async def test_mark_expired_calls_update_with_status_expired():
     """mark_expired() must set status='expired' via update() on jobs_v2."""
     repo = _make_repo()
-
-    update_calls: list[dict] = []
 
     mock_chain = MagicMock()
     mock_chain.update.return_value = mock_chain

@@ -245,8 +245,16 @@ class RefinePipeline:
         job_flags: dict[str, dict] = {}
         kept, kept_ids = [], []
         for job, rid in zip(survivors, survivor_ids):
-            job_dict = job.model_dump()
-            verdict, flags = self.rules_engine.classify(job_dict)
+            # Per-row isolation (matches the module contract): a classify failure on
+            # one row marks it 'rejected' and the pass continues, never aborting the
+            # whole batch. (Batch steps dedup/scoring instead abort+retry by design.)
+            try:
+                verdict, flags = self.rules_engine.classify(job.model_dump())
+            except Exception as exc:  # noqa: BLE001
+                logger.error("refine_dq_classify_failed", extra={"id": rid, "error": str(exc)})
+                endstate[rid] = REJECTED
+                summary["errors"] += 1
+                continue
             if verdict == "reject" and reject_active:
                 endstate[rid] = REJECTED
                 logger.info("refine_dq_rejected", extra={"id": rid, "flags": list(flags)})
@@ -333,14 +341,21 @@ class RefinePipeline:
         # --- Step 7: state-upsert. Survivors -> clean shelf; mark 'refined'. ---
         if final_jobs:
             try:
-                await self.job_repo.upsert(final_jobs)
+                results = await self.job_repo.upsert(final_jobs)
             except Exception as exc:  # noqa: BLE001
-                # An upsert failure must not silently drop rows — they stay 'new'
-                # (endstate None) and get retried on the next pass. Log loudly.
+                # A whole-call upsert failure must not silently drop rows — they stay
+                # 'new' (endstate None) and get retried on the next pass. Log loudly.
                 logger.error("refine_upsert_failed", extra={"error": str(exc), "count": len(final_jobs)})
             else:
-                for rid in final_ids:
-                    endstate[rid] = REFINED
+                # Mark 'refined' ONLY rows that actually reached the shelf. A per-row
+                # upsert failure (results[i] is False) leaves that raw_job 'new' so the
+                # next pass retries it — a swallowed row must never look refined.
+                for ok, rid in zip(results, final_ids):
+                    if ok:
+                        endstate[rid] = REFINED
+                    else:
+                        summary["errors"] += 1
+                        logger.warning("refine_upsert_row_failed", extra={"id": rid})
 
         # --- Commit terminal states. Any survivor still None means upsert failed;
         #     leave it 'new' (omit mark_status) so the next run retries it. ---

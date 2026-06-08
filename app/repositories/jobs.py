@@ -84,7 +84,7 @@ class JobRepository(BaseRepository):
 
         return metrics
 
-    async def upsert(self, jobs: list[ScoredJob]) -> int:
+    async def upsert(self, jobs: list[ScoredJob]) -> list[bool]:
         """Upsert refined jobs into the active shelf (self._table, default jobs_v2).
 
         ON CONFLICT (source, external_id):
@@ -92,10 +92,14 @@ class JobRepository(BaseRepository):
           - update: refreshes last_seen_at + all mutable fields; preserves first_seen_at.
 
         No profile_id — agnostik invariant.
-        Returns the count of rows touched (inserted + updated).
+
+        Returns a per-row success flag aligned to ``jobs`` input order: True when the
+        row reached the shelf, False when its individual upsert raised. The caller
+        (refine pipeline) marks ONLY the True rows 'refined' and leaves the False ones
+        'new' to retry — a row swallowed here must never look refined upstream.
         """
         if not jobs:
-            return 0
+            return []
 
         rows = []
         now = datetime.now(timezone.utc).isoformat()
@@ -128,7 +132,7 @@ class JobRepository(BaseRepository):
                 }
             )
 
-        upserted = 0
+        results: list[bool] = []
         for row in rows:
             try:
                 table = self._table
@@ -137,13 +141,14 @@ class JobRepository(BaseRepository):
                     .upsert(r, on_conflict="source,external_id")
                     .execute()
                 )
-                upserted += 1
+                results.append(True)
             except Exception as exc:
                 logger.error(
                     "upsert_job_failed",
                     extra={"url": row["url"][:80], "error": str(exc)},
                 )
-        return upserted
+                results.append(False)
+        return results
 
     async def mark_expired(self, threshold_days: int) -> int:
         """Mark jobs in the active shelf as 'expired' when last_seen_at is older than threshold_days.

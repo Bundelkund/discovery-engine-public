@@ -70,7 +70,8 @@ def _pipeline(rows: list[dict]) -> RefinePipeline:
         return_value={"location_normalized": "Berlin", "is_remote": False}
     )
     p.profile = ScoringProfile(id="")
-    p.job_repo.upsert = AsyncMock(return_value=0)
+    # upsert now returns a per-row success flag list (default: all rows succeed).
+    p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True] * len(jobs))
     p._enrich = AsyncMock()
     return p
 
@@ -140,7 +141,7 @@ async def test_below_threshold_rejected(monkeypatch):
     )
     monkeypatch.setattr("app.services.refine_pipeline.ScoringPipeline", fake)
 
-    summary = await p.run()
+    await p.run()
     marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
     assert marked["a"] == "rejected"
     assert marked["b"] == "refined"
@@ -163,7 +164,7 @@ async def test_upsert_receives_location_and_flags(monkeypatch):
 
     async def capture_upsert(jobs):
         captured["jobs"] = jobs
-        return len(jobs)
+        return [True] * len(jobs)
 
     p.job_repo.upsert = capture_upsert
 
@@ -172,6 +173,54 @@ async def test_upsert_receives_location_and_flags(monkeypatch):
     assert job.location_normalized == "Berlin"
     assert job.dq_flags == {"junior_title": True}
     assert job.score_stage_1 == 80
+
+
+# --- #4: a per-row upsert failure must NOT mark that raw_job 'refined' ---
+
+
+@pytest.mark.asyncio
+async def test_upsert_partial_failure_leaves_failed_row_new(monkeypatch):
+    """When upsert reports row 'b' failed, only 'a' is marked refined; 'b' stays
+    'new' (no mark_status) so the next pass retries it — never silently refined."""
+    p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
+    monkeypatch.setattr(
+        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
+    )
+    # First job reaches the shelf, second fails inside the repo.
+    p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True, False])
+
+    summary = await p.run()
+    marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
+    assert marked.get("a") == "refined"
+    assert "b" not in marked  # failed row left 'new' for retry
+    assert summary["refined"] == 1
+    assert summary["errors"] >= 1
+
+
+# --- #5: a classify failure on one row rejects it and the pass continues ---
+
+
+@pytest.mark.asyncio
+async def test_classify_failure_isolated_per_row(monkeypatch):
+    """A rules-engine exception on one row marks it 'rejected' and does not abort
+    the batch — the sibling row still refines."""
+    p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
+    monkeypatch.setattr(
+        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
+    )
+
+    def _classify(job_dict):
+        if job_dict.get("title") == "Coach A":
+            raise RuntimeError("rules engine boom")
+        return ("keep", {})
+
+    p.rules_engine.classify = MagicMock(side_effect=_classify)
+
+    summary = await p.run()
+    marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
+    assert marked["a"] == "rejected"
+    assert marked["b"] == "refined"
+    assert summary["errors"] >= 1
 
 
 # --- enrichment is invoked for survivors (preserved from old orchestrator) ---
