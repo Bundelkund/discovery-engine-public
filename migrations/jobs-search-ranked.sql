@@ -2,6 +2,17 @@
 -- Date: 2026-06-08
 -- SAFETY: additive-only (CREATE OR REPLACE FUNCTION). No table/column changes.
 --
+-- PERF (why rank on title only): the filter (title @@ q OR description @@ q) uses the
+-- two expression GIN indexes -> fast BitmapOr (~250ms). Ranking is the cost: an early
+-- cut ranked ts_rank(to_tsvector('simple', title||description), q), which re-tokenizes
+-- ~5k full DESCRIPTIONS per query -> 7-9s warm, near the 8s statement_timeout. Ranking
+-- on title ONLY (ts_rank(to_tsvector('simple', title), q)) tokenizes only short titles
+-- -> sub-second, and is MORE relevant: florians terms are job titles ('Agile Coach',
+-- 'Scrum Master'), so a title hit outranks an incidental description mention. Rows that
+-- match only in description rank rank=0 and fall back to scraped_at DESC — still
+-- returned (recall unchanged), just lower. No stored tsvector column needed (a GENERATED
+-- STORED column would rewrite the 10.5k-row table, exceeding the MCP apply timeout).
+--
 -- Problem (tenant live-test 2026-06-08): /jobs keyword search returned an UNRANKED
 -- slice. The OR-match over 4 multi-word terms (incl. low-selectivity 'new work' ->
 -- 'new' & 'work') matched thousands of rows; without ORDER BY ts_rank the selective
@@ -92,10 +103,7 @@ BEGIN
             SELECT 1 FROM unnest($8) AS s WHERE t.title ILIKE '%%' || s || '%%'))
       AND ($9 IS NULL OR (t.salary_min IS NOT NULL AND t.salary_min >= $9))
       AND ($10 IS NULL OR (t.salary_max IS NOT NULL AND t.salary_max <= $10))
-    ORDER BY ts_rank(
-               to_tsvector('simple', coalesce(t.title, '') || ' ' || coalesce(t.description, '')),
-               $1
-             ) DESC,
+    ORDER BY ts_rank(to_tsvector('simple', t.title), $1) DESC,
              t.scraped_at DESC
     LIMIT $11 OFFSET $12
   $q$, p_table)
