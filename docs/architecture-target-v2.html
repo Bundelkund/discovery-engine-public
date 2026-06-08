@@ -88,6 +88,23 @@
   .note .mut{color:var(--mut)}
   .hl{color:var(--decision);font-weight:600}
   footer{margin-top:34px;color:var(--mut);font-size:11.5px;border-top:1px solid var(--line);padding-top:12px}
+
+  .modrow{display:grid;grid-template-columns:1fr 150px 1fr;gap:0;align-items:stretch;margin:12px 0 6px}
+  .modbox{border:1px solid var(--line);border-radius:14px;padding:16px}
+  .modbox.eng{border-top:3px solid var(--ingest);background:linear-gradient(180deg,rgba(59,130,246,.06),transparent)}
+  .modbox.ten{border-top:3px solid var(--match);background:linear-gradient(180deg,rgba(34,197,94,.06),transparent)}
+  .modbox h3{margin:0 0 3px;font-size:15.5px}
+  .modbox .role{font-size:12px;color:var(--mut);margin-bottom:11px}
+  .owns{list-style:none;padding:0;margin:0}
+  .owns li{font-size:12.5px;padding:6px 10px;margin:6px 0;border:1px solid var(--line);border-radius:7px;background:var(--panel2)}
+  .owns li .tech{display:block;margin-top:1px}
+  .never{font-size:11.5px;margin-top:10px}
+  .wires{display:flex;flex-direction:column;justify-content:center;gap:20px;padding:0 8px}
+  .wire{font-size:10.5px;text-align:center;color:var(--mut)}
+  .wire .lab{display:block;background:#0b1220;border:1px solid var(--line);border-radius:6px;padding:5px 6px;margin-bottom:3px;color:#cdd6e0;line-height:1.3}
+  .wire .ar{font-size:18px;color:var(--store);line-height:1}
+  .mcpbar{margin-top:10px;border:1px dashed var(--line);border-radius:10px;padding:11px 14px;font-size:12.5px;color:#cdd6e0;background:repeating-linear-gradient(45deg,transparent,transparent 9px,rgba(255,255,255,.012) 9px,rgba(255,255,255,.012) 18px)}
+  @media(max-width:760px){.modrow{grid-template-columns:1fr}.wires{flex-direction:row;padding:10px 0}}
 </style>
 </head>
 <body>
@@ -212,6 +229,50 @@
   <div>↑ billig, für jede Person anders</div>
 </div>
 
+<!-- ===================== MODULE BOUNDARY ===================== -->
+<div class="section-h" style="border-color:var(--store)">Die zwei Bauteile — und wo die Grenze liegt</div>
+<p class="note">Dasselbe Bild von oben, anders geschnitten. Es zerfällt in <b>zwei getrennt verwaltbare Teile</b>, die sich an nur <b>zwei</b> Stellen berühren. Genau diese schmale Naht macht das System modular: ein Teil lässt sich umbauen, ohne das andere anzufassen — und später sogar getrennt betreiben. <span class="mut">Schritt ① + ② von oben = linkes Teil. Schritt ③ = rechtes Teil.</span></p>
+
+<div class="modrow">
+  <div class="modbox eng">
+    <h3>🏭 Discovery Engine</h3>
+    <div class="role">kennt nur Jobs — <b>keine Personen</b> · deckt ① Einsammeln + ② Aufräumen</div>
+    <ul class="owns">
+      <li>Einsammeln + Aufräumen<span class="tech">ingest · refine</span></li>
+      <li>Sauberes Regal = globaler Job-Bestand<span class="tech">Tabelle: jobs</span></li>
+      <li>Lese-Schnittstelle<span class="tech">GET /jobs · /jobs/{id} · /companies</span></li>
+    </ul>
+    <div class="never" style="color:#fca5a5">✕ speichert nie eine Person · kein <span class="tech">profile_id</span> in der Abfrage</div>
+  </div>
+
+  <div class="wires">
+    <div class="wire">
+      <span class="lab"><b>Draht 1</b><br>Suchwörter <b>aller</b> Personen<br>als flache Liste <span class="tech">DISTINCT term · anonym</span></span>
+      <span class="ar">←</span>
+    </div>
+    <div class="wire">
+      <span class="lab"><b>Draht 2</b><br>sauberer Job-Bestand<br><b>nur lesen, über HTTP</b> <span class="tech">GET /jobs</span></span>
+      <span class="ar">→</span>
+    </div>
+  </div>
+
+  <div class="modbox ten">
+    <h3>👤 Tenant-Modul <span class="opentag">neu zu bauen</span></h3>
+    <div class="role">kennt die <b>Personen</b> · deckt ③ Zuordnen · <b>mehrtenantfähig ab Zeile 1</b> (heute 1 Profil drin, Schema für viele)</div>
+    <ul class="owns">
+      <li>Wer ist wer + Login auflösen<span class="tech">resolve(req)→profile_id · key jetzt / OAuth später</span></li>
+      <li>Key→Person als <b>DB-Zeile</b> (User anlegen = INSERT)<span class="tech">Tabelle: tenant_keys</span></li>
+      <li>Suchwünsche je Person, löschbar (refcount)<span class="tech">Tabelle: profiles · search_terms</span></li>
+      <li>Persönliche Trefferliste, pro Person<span class="tech">Tabelle: matches · PK(profile_id,job_id)</span></li>
+    </ul>
+    <div class="never" style="color:#86efac">✓ Personalisierung + DSGVO-Löschen + Tenant-Isolation leben <b>nur hier</b> — gekapselt</div>
+  </div>
+</div>
+
+<div class="mcpbar">
+  🔌 <b>Später — MCP-Server für Cowork / ChatGPT / WonderApply:</b> hängt <b>nur am Tenant-Modul</b> (zeigt „<b>meine</b> Treffer" <span class="tech">GET /my/matches</span>), <b>nie</b> direkt an der Engine. Identität löst der MCP-Server über dieselbe <span class="tech">resolve()</span>-Schicht auf (Key heute, OAuth wenn ChatGPT dazukommt). Technisch erzwingbar: die Engine vergibt dem Lese-Zugang nur das Recht <span class="tech">jobs:read</span> — die Auslöser fürs Einsammeln/Aufräumen bleiben dem Betreiber. <span class="mut">Sicherheitsgrenze = Modul-Grenze, dieselbe Linie.</span>
+</div>
+
 <!-- ===================== DECISION CARDS ===================== -->
 <div class="section-h">Die wichtigen Weichenstellungen</div>
 <p class="note">Jeder <span class="di" style="width:15px;height:15px;font-size:9px">?</span> ist eine bewusste Entscheidung darüber, <b>wie mit den Daten umgegangen wird</b> — kein technisches Klein-Klein. <span class="opentag">offen</span> = noch nicht entschieden, sollte vor dem Bauen geklärt werden.</p>
@@ -267,6 +328,14 @@
     <p><b>→ So gelöst:</b> Jedes Suchwort <b>gehört einer Person</b> (eigene kleine Liste <span class="tech">search_terms</span>). Eingesammelt wird mit allen Suchwörtern aller Personen zusammen. Nutzen zwei dasselbe Wort → einmal gefragt, zwei Besitzer.</p>
     <p class="imp">+ Person löscht ihr Wort / wird gelöscht → ihr Eintrag weg → Wort wird nur weiter geholt, wenn eine <b>andere</b> Person es noch hat, sonst fällt es automatisch raus. Sauber zuordenbar + löschbar (DSGVO).</p>
     <p class="mut" style="font-size:12px">Nur tatsächliche Nutzer ergänzen Suchwörter. Ein paar Tage Verzögerung bis ein neues Wort greift = ok (Firmen-Portale zeigen ohnehin sofort eine breite Auswahl).</p>
+  </div>
+
+  <div class="card done" style="grid-column:1/-1">
+    <h3><span class="di">8</span> Persönliche Treffer: live ausrechnen oder vorab speichern? <span class="donetag">entschieden: vorab (Multi-User)</span></h3>
+    <p>Liegt im <b>Tenant-Modul</b>, lässt die Engine unberührt. Zwei Wege:</p>
+    <p><b>Live:</b> Profil = gespeicherte Filter, „meine Treffer" = fragt im Moment das saubere Regal ab. Einfach, immer aktuell — aber <b>kein</b> „neu seit gestern", keine eigene Rangfolge, keine Historie.</p>
+    <p><b>Vorab gespeichert:</b> Hintergrund-Lauf bewertet jeden Job je Person → feste Treffer-Zeilen <span class="tech">(Tabelle matches)</span>. Bringt Rangfolge, „neue Treffer"-Signal, Verlauf. Kostet: Auffrisch-Lauf, Speicher.</p>
+    <p class="imp">→ <b>Vorab gespeichert</b>, weil das System <b>von Anfang an mehrtenantfähig</b> geplant wird: jeder Nutzer braucht „neu seit gestern" + eigene Rangfolge — geht nur mit gespeicherten matches-Zeilen. Der Match-Loop läuft heute über 1 Profil (degeneriert), das Schema trägt schon viele. Eigener Auffrisch-<b>Takt pro Person</b> erst ab vielen Nutzern (= Punkt ⑥).</p>
   </div>
 </div>
 
