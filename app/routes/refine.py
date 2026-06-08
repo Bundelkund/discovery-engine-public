@@ -23,9 +23,27 @@ logger = logging.getLogger(__name__)
 
 refine_router = APIRouter(tags=["refine"])
 
+# Single-flight guard: refine has no atomic row-claim (fetch_new is a plain
+# SELECT status='new'). If an n8n cron fires /refine while a prior pass is still
+# draining the same batch, both would process the same rows — the second pass
+# would mark a just-refined job 'duplicate' against the first pass's freshly
+# added MinHash bands, and double the enrichment spend. This module-level flag
+# serialises passes WITHIN one process: there is no `await` between the check and
+# the set, so it is atomic w.r.t. the asyncio event loop.
+# CAVEAT: only covers a single uvicorn process. With multiple workers, promote to
+# a Postgres advisory lock (pg_try_advisory_lock) or an atomic SELECT ... FOR
+# UPDATE SKIP LOCKED claim on raw_jobs.
+_refine_running = False
+
 
 async def _run_refine(limit: int) -> None:
-    """Background worker: fresh Supabase client, one refine pass."""
+    """Background worker: fresh Supabase client, one refine pass (single-flight)."""
+    global _refine_running
+    if _refine_running:
+        logger.info("refine_skip_already_running", extra={"limit": limit})
+        return
+    _refine_running = True
+
     from app.dependencies import get_supabase as _gs
 
     supabase = _gs()
@@ -34,6 +52,8 @@ async def _run_refine(limit: int) -> None:
         logger.info("refine_run_done", extra=summary)
     except Exception as exc:  # noqa: BLE001
         logger.error("refine_run_failed", extra={"error": str(exc)})
+    finally:
+        _refine_running = False
 
 
 @refine_router.post(

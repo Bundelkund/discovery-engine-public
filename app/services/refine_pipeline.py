@@ -164,6 +164,16 @@ class RefinePipeline:
         Returns ``{fetched, refined, rejected, duplicate, errors}``. Every fetched
         row is accounted for: refined + rejected + duplicate == fetched.
         """
+        # Retention: drop dedup_memory rows older than the window so the table
+        # stays bounded. Best-effort — a purge failure must not block the pass.
+        # (Read-path correctness is already window-filtered in is_near_duplicate.)
+        try:
+            purged = await asyncio.to_thread(self.minhash.purge_old)
+            if purged:
+                logger.info("refine_dedup_purged", extra={"deleted": purged})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("refine_dedup_purge_failed", extra={"error": str(exc)})
+
         rows = await self.raw_repo.fetch_new(limit=limit)
         summary = {
             "fetched": len(rows),

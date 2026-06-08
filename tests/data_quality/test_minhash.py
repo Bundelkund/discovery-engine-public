@@ -30,7 +30,8 @@ def _stub_client(band_data=None):
     DB rows). Pass [] to simulate no stored bands (not a duplicate).
     """
     client = MagicMock()
-    client.table.return_value.select.return_value.in_.return_value.limit.return_value.execute.return_value.data = (
+    # Read path: select().in_(bands).gte(seen_at, cutoff).limit(1).execute()
+    client.table.return_value.select.return_value.in_.return_value.gte.return_value.limit.return_value.execute.return_value.data = (
         band_data if band_data is not None else []
     )
     # upsert path used by add()
@@ -106,7 +107,7 @@ def test_near_duplicate_empty_text_returns_false() -> None:
 def test_near_duplicate_db_error_returns_false() -> None:
     """A DB exception during query must be caught and return False (fail-safe)."""
     client = MagicMock()
-    client.table.return_value.select.return_value.in_.return_value.limit.return_value.execute.side_effect = (
+    client.table.return_value.select.return_value.in_.return_value.gte.return_value.limit.return_value.execute.side_effect = (
         RuntimeError("connection refused")
     )
     dedup = _make_dedup(client)

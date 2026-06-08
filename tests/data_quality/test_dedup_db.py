@@ -62,8 +62,8 @@ def test_restart_sim_near_duplicate_persists():
 
     # Instance B — fresh process, queries DB
     client_b = MagicMock()
-    # Simulate DB having one of the band rows stored
-    client_b.table.return_value.select.return_value.in_.return_value.limit.return_value.execute.return_value.data = [
+    # Simulate DB having one of the band rows stored (within retention window).
+    client_b.table.return_value.select.return_value.in_.return_value.gte.return_value.limit.return_value.execute.return_value.data = [
         {"band_hash": bands[0]}
     ]
     dedup_b = _make_dedup(client_b)
@@ -75,9 +75,26 @@ def test_restart_sim_near_duplicate_persists():
 def test_restart_sim_no_stored_rows_is_not_dup():
     """Fresh instance with empty DB does not flag text as duplicate."""
     client = MagicMock()
-    client.table.return_value.select.return_value.in_.return_value.limit.return_value.execute.return_value.data = []
+    client.table.return_value.select.return_value.in_.return_value.gte.return_value.limit.return_value.execute.return_value.data = []
     dedup = _make_dedup(client)
     assert dedup.is_near_duplicate(TEXT) is False
+
+
+def test_is_near_duplicate_filters_by_retention_window():
+    """The read path MUST filter on seen_at >= now - window_days so expired
+    bands no longer count as near-dups (regression guard for the window fix)."""
+    client = MagicMock()
+    client.table.return_value.select.return_value.in_.return_value.gte.return_value.limit.return_value.execute.return_value.data = []
+    dedup = _make_dedup(client)
+    dedup.is_near_duplicate(TEXT)
+
+    gte_call = client.table.return_value.select.return_value.in_.return_value.gte
+    gte_call.assert_called_once()
+    col_arg, cutoff_arg = gte_call.call_args[0]
+    assert col_arg == "seen_at"
+    cutoff_dt = datetime.fromisoformat(cutoff_arg)
+    expected = datetime.now(tz=timezone.utc) - timedelta(days=42)
+    assert abs((cutoff_dt - expected).total_seconds()) < 5
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +137,7 @@ def test_purge_after_window_not_duplicate():
     dedup.purge_old()
 
     # Step 2: subsequent is_near_duplicate query returns empty (rows gone)
-    client.table.return_value.select.return_value.in_.return_value.limit.return_value.execute.return_value.data = []
+    client.table.return_value.select.return_value.in_.return_value.gte.return_value.limit.return_value.execute.return_value.data = []
     assert dedup.is_near_duplicate(TEXT) is False
 
 

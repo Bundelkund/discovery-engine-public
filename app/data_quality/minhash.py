@@ -15,7 +15,7 @@ Schema (dedup_memory):
 import hashlib
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -143,8 +143,11 @@ class MinHashDedup:
     def is_near_duplicate(self, text: str) -> bool:
         """Return True if *text* is a near-duplicate of any stored entry.
 
-        Queries dedup_memory for any band_hash collision; a single shared band
-        is sufficient to declare a near-duplicate match.
+        Queries dedup_memory for any band_hash collision WITHIN the retention
+        window (seen_at >= now - window_days); a single shared band is sufficient
+        to declare a near-duplicate match. Entries older than the window are
+        ignored even before purge_old() physically removes them, so the dedup
+        memory genuinely "forgets" after window_days.
         """
         if not text:
             return False
@@ -155,11 +158,15 @@ class MinHashDedup:
         if not band_hashes:
             return False
 
+        window_start = (
+            datetime.now(tz=timezone.utc) - timedelta(days=self.window_days)
+        ).isoformat()
         try:
             result = (
                 self.client.table("dedup_memory")
                 .select("band_hash")
                 .in_("band_hash", band_hashes)
+                .gte("seen_at", window_start)
                 .limit(1)
                 .execute()
             )
