@@ -209,7 +209,67 @@ class JobRepository(BaseRepository):
         PostGIS is NOT installed; max_distance_km uses a SQL bounding-box
         prefilter on location_lat/location_lon and is refined with a
         Python-Haversine post-filter at the route layer.
+
+        Ranked path: when keywords_positive is set (and no distance filter), the
+        query is served by the search_jobs_ranked RPC, which ORDER BYs ts_rank DESC
+        so selective terms outrank high-frequency token floods (the unranked
+        PostgREST path buried the relevant jobs past the page window — recall blocker
+        E1). The RPC also builds the tsquery server-side, honoring "..." phrase quotes
+        (E2). Distance + keywords still uses the legacy PostgREST path below (bbox
+        prefilter has no RPC equivalent yet).
         """
+        # Expand seniority once (shared by both paths).
+        seniority_map = {
+            "senior": ["senior", "sr.", "lead", "principal", "staff"],
+            "junior": ["junior", "jr.", "entry", "trainee", "werkstudent"],
+            "lead": ["lead", "principal", "staff", "head of"],
+            "mid": ["mid", "medior", "intermediate"],
+        }
+        seniority_terms = (
+            seniority_map.get(seniority.lower(), [seniority]) if seniority else None
+        )
+
+        # -- Ranked path (RPC): keyword search ordered by ts_rank --
+        # p_table = self._table so the RPC ranks the ACTIVE shelf (jobs_v2 post-cutover);
+        # the RPC allowlists 'jobs'|'jobs_v2'. This is the "separat ranken" layer over the
+        # agnostic refine→jobs_v2 shelf (Sammeln→Aufräumen→Ranken-separat).
+        if keywords_positive and max_distance_km is None:
+            params = {
+                "p_table": self._table,
+                "p_keywords_positive": keywords_positive,
+                "p_keywords_negative": keywords_negative,
+                "p_location": location,
+                "p_max_age_days": max_age_days,
+                "p_exclude_domain": exclude_domain,
+                "p_source": source,
+                "p_company_domain": company_domain,
+                "p_seniority_terms": seniority_terms,
+                "p_min_salary": min_salary,
+                "p_max_salary": max_salary,
+                "p_limit": limit,
+                "p_offset": offset,
+            }
+            res = await asyncio.to_thread(
+                lambda: self.client.rpc("search_jobs_ranked", params).execute()
+            )
+            data = res.data or []
+            rows = [r["result"] for r in data]
+            total = int(data[0]["total_count"]) if data else 0
+            logger.info(
+                "jobs_query_ranked",
+                extra={
+                    "keywords_positive": keywords_positive,
+                    "keywords_negative": keywords_negative,
+                    "location": location,
+                    "max_age_days": max_age_days,
+                    "limit": limit,
+                    "offset": offset,
+                    "result_count": len(rows),
+                    "total": total,
+                },
+            )
+            return rows, total
+
         q = self.client.table(self._table).select("*", count="exact")
 
         # -- MUST filters (AC-001) --
@@ -279,16 +339,9 @@ class JobRepository(BaseRepository):
         if company_domain:
             q = q.in_("company_domain", company_domain)
 
-        # seniority: simple ILIKE heuristic on title
-        if seniority:
-            seniority_map = {
-                "senior": ["senior", "sr.", "lead", "principal", "staff"],
-                "junior": ["junior", "jr.", "entry", "trainee", "werkstudent"],
-                "lead": ["lead", "principal", "staff", "head of"],
-                "mid": ["mid", "medior", "intermediate"],
-            }
-            terms = seniority_map.get(seniority.lower(), [seniority])
-            or_parts = [f"title.ilike.%{t}%" for t in terms]
+        # seniority: simple ILIKE heuristic on title (terms expanded above)
+        if seniority_terms:
+            or_parts = [f"title.ilike.%{t}%" for t in seniority_terms]
             q = q.or_(",".join(or_parts))
 
         # salary: NULL-tolerant — only apply if column is not NULL

@@ -135,18 +135,54 @@ def test_keywords_positive_filter(client):
     assert "fastapi" in call_kwargs["keywords_positive"]
 
 
-def test_keywords_positive_filter_repo_logic():
-    """Unit-test: query() builds correct token-FTS (wfts) OR chain for keywords_positive."""
+def test_keywords_positive_uses_ranked_rpc():
+    """Unit-test: keywords_positive routes to the search_jobs_ranked RPC (E1 ranking).
+
+    The RPC ORDER BYs ts_rank DESC server-side; the old unranked PostgREST wfts path
+    buried selective terms past the page window (recall blocker, 2026-06-08).
+    """
     from unittest.mock import MagicMock
 
     mock_client = MagicMock()
-    # Build a chain that returns a plausible result
+    mock_client.rpc.return_value.execute.return_value = MagicMock(
+        data=[{"result": _make_job_row(), "total_count": 5103}]
+    )
+
+    from app.repositories.jobs import JobRepository
+    import asyncio
+
+    repo = JobRepository(mock_client)
+    rows, total = asyncio.run(
+        repo.query(keywords_positive=["agile coach", "scrum master"])
+    )
+    assert total == 5103
+    assert len(rows) == 1
+    # RPC called with the ranked-search function + correct shelf/terms.
+    name, params = mock_client.rpc.call_args[0]
+    assert name == "search_jobs_ranked"
+    # p_table = active shelf (JOBS_TABLE env, default jobs_v2). Allowlisted 'jobs'|'jobs_v2'.
+    from app.config import get_settings
+    assert params["p_table"] == get_settings().jobs_table
+    assert params["p_keywords_positive"] == ["agile coach", "scrum master"]
+    # The legacy unranked PostgREST path must NOT be used.
+    mock_client.table.assert_not_called()
+
+
+def test_keywords_positive_with_distance_falls_back_to_legacy():
+    """keywords_positive + max_distance_km uses the legacy PostgREST path (no RPC).
+
+    The ranked RPC has no bbox-prefilter equivalent yet, so distance+keywords keeps
+    the wfts path. Guards the fallback branch in query()."""
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
     chain = MagicMock()
     chain.execute.return_value = MagicMock(data=[_make_job_row()], count=1)
     (
         mock_client.table.return_value
         .select.return_value
         .or_.return_value
+        .ilike.return_value
         .order.return_value
         .limit.return_value
         .offset.return_value
@@ -156,12 +192,13 @@ def test_keywords_positive_filter_repo_logic():
     import asyncio
 
     repo = JobRepository(mock_client)
-    rows, total = asyncio.run(repo.query(keywords_positive=["python"]))
-    assert total == 1
-    # Verify .or_() was called with token-FTS (wfts) pattern, not substring ILIKE
+    rows, total = asyncio.run(
+        repo.query(keywords_positive=["python"], location="Berlin", max_distance_km=50)
+    )
+    # Legacy wfts path used; RPC NOT called.
+    mock_client.rpc.assert_not_called()
     call_args = mock_client.table.return_value.select.return_value.or_.call_args
     assert "title.wfts(simple).python" in call_args[0][0]
-    assert "description.wfts(simple).python" in call_args[0][0]
 
 
 # ---------------------------------------------------------------------------

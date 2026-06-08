@@ -20,6 +20,8 @@
 -- to_tsvector(regconfig, text) (2-arg, explicit config) is IMMUTABLE -> indexable.
 -- Built on BOTH shelves: public.jobs (live /jobs source until cutover) + jobs_v2.
 -- Additive + reversible (DROP INDEX). keywords_negative + SHOULD-filters unchanged.
+-- EXPLAIN on a real 4-term profile: 5403ms Seq Scan -> 252ms BitmapOr (~20x).
+-- Applied live to guocdgjpbvsvcvchgolm 2026-06-08.
 
 CREATE INDEX IF NOT EXISTS idx_jobs_title_fts
   ON public.jobs USING gin (to_tsvector('simple', title));

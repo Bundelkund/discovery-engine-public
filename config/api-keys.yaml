@@ -32,3 +32,14 @@ consumers:
     key_env: N8N_API_KEY
     scopes: [scrape:trigger, jobs:read]
     active: true
+
+  # tenant-module — Draht-2 consumer. Person-scoped match-loop fetches GET /jobs
+  # (HTTP-only, no SQL join) to score jobs into tenant.matches. Read-only: jobs:read,
+  # NO scrape:trigger (tenant never drives discovery). Key value lives in Coolify Env
+  # (TENANT_API_KEY) on BOTH sides — engine reads it to validate, tenant sends it as
+  # X-API-Key. Verified live 2026-06-08 (matches_upserted 0→2 after E1/E2 ranking fix).
+  - id: tenant
+    name: "Tenant Module"
+    key_env: TENANT_API_KEY
+    scopes: [jobs:read]
+    active: true
