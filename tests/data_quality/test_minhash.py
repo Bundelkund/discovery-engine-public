@@ -1,87 +1,55 @@
-"""Tests for MinHashDedup near-duplicate detection."""
+"""Tests for DB-backed MinHashDedup near-duplicate detection.
+
+In-mem LSH semantics (.size, job_id tracking, bulk_add, remove) are gone —
+that state now lives in the dedup_memory table. DB-interaction tests live in
+test_dedup_db.py. This file covers:
+  - constructor config validation (ValueError guards)
+  - is_near_duplicate() signature and mock-DB behaviour
+  - add() empty-text guard
+"""
 import pytest
+from unittest.mock import MagicMock
 
-from app.data_quality.minhash import MinHashDedup
-
-
-@pytest.fixture()
-def dedup():
-    return MinHashDedup(threshold=0.9, num_perm=128, shingle_size=5)
+from app.data_quality.minhash import MinHashDedup, _compute_band_hashes
 
 
 # ---------------------------------------------------------------------------
-# Near-duplicate detection
+# Shared helpers
 # ---------------------------------------------------------------------------
 
-
-def test_near_duplicate_identical_texts(dedup: MinHashDedup) -> None:
-    """Two identical texts should be detected as near-duplicates."""
-    text = "This is a job description about software engineering at Acme Corp. " * 20
-    dedup.add(text, "job-1")
-    assert dedup.is_near_duplicate(text, []) is True
+NUM_PERM = 128
+BAND_WIDTH = 4
+SHINGLE_SIZE = 5
+SEED = 42
 
 
-def test_near_duplicate_slightly_modified(dedup: MinHashDedup) -> None:
-    """Texts with >95% similarity should be flagged as near-duplicates.
+def _stub_client(band_data=None):
+    """Return a MagicMock supabase client.
 
-    We use a base text appended with a short suffix so the Jaccard similarity
-    is reliably above 0.95, which MinHash-LSH detects consistently at threshold=0.9.
-    (Changing only a few words in a long repeated text produces Jaccard ~0.95 but
-    MinHash estimation variance can cause misses; appending is more deterministic.)
+    *band_data* — list of dicts returned by the dedup_memory query (simulates
+    DB rows). Pass [] to simulate no stored bands (not a duplicate).
     """
-    base = (
-        "Senior Python Engineer at Acme Corp. We are looking for an experienced "
-        "software engineer to join our growing team. You will work on exciting "
-        "projects involving distributed systems and cloud computing. "
-    ) * 10
-    # Append a small suffix — keeps Jaccard ~0.95 (reliably above 0.9 threshold)
-    modified = base + "Apply now!"
-    dedup.add(base, "job-original")
-    assert dedup.is_near_duplicate(modified, []) is True
+    client = MagicMock()
+    client.table.return_value.select.return_value.in_.return_value.limit.return_value.execute.return_value.data = (
+        band_data if band_data is not None else []
+    )
+    # upsert path used by add()
+    client.table.return_value.upsert.return_value.execute.return_value.data = []
+    return client
 
 
-def test_non_duplicate_distinct_texts(dedup: MinHashDedup) -> None:
-    """Completely different texts should NOT be flagged as near-duplicates."""
-    text_a = "Backend Java developer role at TechCo. Spring Boot, microservices. " * 15
-    text_b = "Marketing manager position at StartupXYZ. Social media, campaigns. " * 15
-    dedup.add(text_a, "job-a")
-    assert dedup.is_near_duplicate(text_b, []) is False
-
-
-def test_non_duplicate_empty_index(dedup: MinHashDedup) -> None:
-    """Empty index never returns a duplicate."""
-    text = "Any job description here."
-    assert dedup.is_near_duplicate(text, []) is False
-
-
-# ---------------------------------------------------------------------------
-# add() / query behaviour
-# ---------------------------------------------------------------------------
-
-
-def test_add_increases_size(dedup: MinHashDedup) -> None:
-    dedup.add("First unique job description " * 10, "job-1")
-    assert dedup.size == 1
-    dedup.add("Second unique job description " * 10, "job-2")
-    assert dedup.size == 2
-
-
-def test_add_duplicate_job_id_is_noop(dedup: MinHashDedup) -> None:
-    """Adding the same job_id twice should not grow the index."""
-    text = "Python developer at Acme " * 10
-    dedup.add(text, "job-same")
-    dedup.add(text, "job-same")
-    assert dedup.size == 1
-
-
-def test_add_empty_text_is_skipped(dedup: MinHashDedup) -> None:
-    dedup.add("", "job-empty")
-    assert dedup.size == 0
-
-
-def test_add_empty_id_is_skipped(dedup: MinHashDedup) -> None:
-    dedup.add("Some text " * 10, "")
-    assert dedup.size == 0
+def _make_dedup(client=None, **kwargs) -> MinHashDedup:
+    if client is None:
+        client = _stub_client()
+    params = dict(
+        threshold=0.9,
+        num_perm=NUM_PERM,
+        band_width=BAND_WIDTH,
+        shingle_size=SHINGLE_SIZE,
+        seed=SEED,
+    )
+    params.update(kwargs)
+    return MinHashDedup(client, **params)
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +59,77 @@ def test_add_empty_id_is_skipped(dedup: MinHashDedup) -> None:
 
 def test_invalid_threshold_raises() -> None:
     with pytest.raises(ValueError, match="threshold"):
-        MinHashDedup(threshold=0.0)
+        MinHashDedup(_stub_client(), threshold=0.0)
 
 
 def test_invalid_num_perm_raises() -> None:
     with pytest.raises(ValueError, match="num_perm"):
-        MinHashDedup(num_perm=0)
+        MinHashDedup(_stub_client(), num_perm=0)
+
+
+def test_invalid_band_width_raises() -> None:
+    with pytest.raises(ValueError, match="band_width"):
+        # band_width=3 does not divide num_perm=128 evenly
+        MinHashDedup(_stub_client(), num_perm=128, band_width=3)
+
+
+# ---------------------------------------------------------------------------
+# is_near_duplicate() — DB query behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_near_duplicate_when_band_in_db() -> None:
+    """When DB returns a band collision, is_near_duplicate returns True."""
+    text = "This is a job description about software engineering at Acme Corp. " * 20
+    bands = _compute_band_hashes(text, NUM_PERM, BAND_WIDTH, SHINGLE_SIZE, SEED)
+    client = _stub_client(band_data=[{"band_hash": bands[0]}])
+    dedup = _make_dedup(client)
+    assert dedup.is_near_duplicate(text) is True
+
+
+def test_not_near_duplicate_when_db_empty() -> None:
+    """When DB returns no rows, is_near_duplicate returns False."""
+    text = "Backend Java developer role at TechCo. Spring Boot, microservices. " * 15
+    client = _stub_client(band_data=[])
+    dedup = _make_dedup(client)
+    assert dedup.is_near_duplicate(text) is False
+
+
+def test_near_duplicate_empty_text_returns_false() -> None:
+    """Empty text is never a duplicate (no DB call made)."""
+    client = _stub_client()
+    dedup = _make_dedup(client)
+    assert dedup.is_near_duplicate("") is False
+    client.table.assert_not_called()
+
+
+def test_near_duplicate_db_error_returns_false() -> None:
+    """A DB exception during query must be caught and return False (fail-safe)."""
+    client = MagicMock()
+    client.table.return_value.select.return_value.in_.return_value.limit.return_value.execute.side_effect = (
+        RuntimeError("connection refused")
+    )
+    dedup = _make_dedup(client)
+    assert dedup.is_near_duplicate("some job text " * 10) is False
+
+
+# ---------------------------------------------------------------------------
+# add() guards
+# ---------------------------------------------------------------------------
+
+
+def test_add_empty_text_skips_upsert() -> None:
+    """add() with empty text must not call supabase at all."""
+    client = _stub_client()
+    dedup = _make_dedup(client)
+    dedup.add("")
+    client.table.assert_not_called()
+
+
+def test_add_non_empty_text_calls_upsert() -> None:
+    """add() with valid text must issue exactly one upsert call."""
+    client = _stub_client()
+    dedup = _make_dedup(client)
+    dedup.add("Python developer at Acme Corp. " * 10)
+    client.table.assert_called_with("dedup_memory")
+    client.table.return_value.upsert.assert_called_once()

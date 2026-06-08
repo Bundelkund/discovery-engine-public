@@ -5,6 +5,7 @@ import httpx
 from app.config import get_settings
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
+from app.services.terms_provider import resolve_search_terms
 from app.sources.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ class CareerjetScraper(BaseScraper):
             locale = config.get("locale_code", "de_DE")
             location = config.get("location", "Deutschland")
             limit = config.get("limit", 50)
-            search_terms = config.get("search_terms", ["AI Consultant"])
+            search_terms = config.get("search_terms") or resolve_search_terms("careerjet")
             user_ip = config.get("user_ip", "127.0.0.1")
             user_agent = config.get("user_agent", self.DEFAULT_UA)
             referer = config.get("referer", self.DEFAULT_REFERER)

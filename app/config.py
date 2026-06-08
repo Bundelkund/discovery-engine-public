@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     careerjet_affid: str = ""
     jooble_api_key: str = ""
     themuse_api_key: str = ""
+    # Cutover read-switch: controls which jobs shelf JobRepository and DeduplicationService
+    # query. Default = "jobs_v2" (target architecture). Set to "jobs" to read from v1 shelf
+    # during rollback. Production cutover runbook:
+    #   1. python scripts/migrate_jobs_v2.py --copy     (idempotent upsert v1 → v2)
+    #   2. python scripts/migrate_jobs_v2.py --report   (gate: exit 0 = all keys copied)
+    #   3. Set JOBS_TABLE=jobs_v2 in Coolify → Redeploy helpful-hyena
+    #   4. Keep v1 table for rollback (revert JOBS_TABLE=jobs); drop only after stable.
+    #   5. python scripts/migrate_jobs_v2.py --apply-drop (requires --report pass same run)
+    jobs_table: str = "jobs_v2"
 
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",
@@ -90,6 +99,12 @@ class MinHashConfig(BaseModel):
     threshold: float = 0.9
     num_perm: int = 128
     shingle_size: int = 5
+    band_width: int = 4   # bands = num_perm / band_width = 32
+    seed: int = 42
+
+
+class DedupConfig(BaseModel):
+    window_days: int = 42  # retention window for dedup_memory rows
 
 
 class RulesConfig(BaseModel):
@@ -101,6 +116,7 @@ class RulesConfig(BaseModel):
 
 class DataQualityConfig(BaseModel):
     minhash: MinHashConfig = Field(default_factory=MinHashConfig)
+    dedup: DedupConfig = Field(default_factory=DedupConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
 
     @property

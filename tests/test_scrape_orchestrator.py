@@ -1,6 +1,8 @@
 """
-Tests for ScrapeOrchestrator — focuses on the optional profile_id entry-point
-(Worker-A refactored: profile_id: str | None = None).
+Tests for ScrapeOrchestrator — store-first design.
+
+Fetch path now: fetch → build RawJob list → insert into raw_jobs (status='new').
+All normalize/dedup/score/enrich steps live in the refine pipeline (A3).
 """
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,56 +23,18 @@ def _make_orchestrator() -> ScrapeOrchestrator:
 
 
 # ---------------------------------------------------------------------------
-# profile_id optional — entry-point signature test
+# Entry-point signature
 # ---------------------------------------------------------------------------
 
 
-def test_run_signature_accepts_none_profile_id():
-    """ScrapeOrchestrator.run() signature allows profile_id: None."""
+def test_run_signature_has_no_profile_id():
+    """ScrapeOrchestrator.run() must NOT have a profile_id parameter (agnostik invariant)."""
     import inspect
 
     sig = inspect.signature(ScrapeOrchestrator.run)
-    param = sig.parameters.get("profile_id")
-    assert param is not None, "profile_id parameter must exist"
-    assert param.default is None, "profile_id must default to None"
-
-
-@pytest.mark.asyncio
-async def test_run_with_none_profile_id_does_not_raise():
-    """run() with profile_id=None returns a ScrapeResponse (no AttributeError)."""
-    orch = _make_orchestrator()
-
-    # Patch the heavy dependencies — we only care that the entry-point works
-    with (
-        patch("app.services.scrape_orchestrator.load_sources_config", return_value={"sources": {}}),
-        patch("app.services.scrape_orchestrator.SourceRegistry.get") as mock_get,
-    ):
-        mock_scraper = MagicMock()
-        mock_scraper.fetch = AsyncMock(return_value=[])
-        mock_get.return_value = lambda: mock_scraper
-
-        result = await orch.run(source_id="greenhouse", profile_id=None)
-
-    assert isinstance(result, ScrapeResponse)
-    assert result.profile_id == ""  # empty string when None passed
-
-
-@pytest.mark.asyncio
-async def test_run_with_explicit_profile_id_preserved():
-    """run() with an explicit profile_id preserves it in the response."""
-    orch = _make_orchestrator()
-
-    with (
-        patch("app.services.scrape_orchestrator.load_sources_config", return_value={"sources": {}}),
-        patch("app.services.scrape_orchestrator.SourceRegistry.get") as mock_get,
-    ):
-        mock_scraper = MagicMock()
-        mock_scraper.fetch = AsyncMock(return_value=[])
-        mock_get.return_value = lambda: mock_scraper
-
-        result = await orch.run(source_id="greenhouse", profile_id="profile-abc")
-
-    assert result.profile_id == "profile-abc"
+    assert "profile_id" not in sig.parameters, (
+        "profile_id must NOT appear in ScrapeOrchestrator.run() — agnostik invariant"
+    )
 
 
 @pytest.mark.asyncio
@@ -88,238 +52,135 @@ async def test_run_returns_zero_jobs_on_empty_source():
 
         result = await orch.run(source_id="greenhouse")
 
+    assert isinstance(result, ScrapeResponse)
     assert result.jobs_found == 0
-    assert result.jobs_new == 0
     assert result.jobs_stored == 0
 
 
-# ---------------------------------------------------------------------------
-# AC-005: MinHash end-to-end integration
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_minhash_catches_near_duplicates_across_sources():
-    """AC-005: 2 jobs with identical description from different sources → only 1 stored."""
-    from app.data_quality.context import reset_dq_context
-    from app.deduplication.dedup import DeduplicationService
-    from app.models.job import NormalizedJob
-
-    # Fresh singleton so LSH starts empty
-    reset_dq_context()
+async def test_run_with_store_false_does_not_call_repo():
+    """run(store=False) skips the raw_job_repo.insert_batch call."""
+    from app.models.job import RawJob
 
     orch = _make_orchestrator()
 
-    desc = (
-        "We are looking for a senior Python developer with FastAPI and "
-        "Postgres experience. Remote-friendly German SaaS team. "
-    ) * 4  # ensure > shingle_size
-
-    # Title must pass the T6 storage-gate (Florian profile is loaded) so the
-    # jobs reach the MinHash stage — "AI Coach" is a primary target role.
-    job_a = NormalizedJob(
-        title="AI Coach",
-        url="https://linkedin.com/jobs/1",
-        source="linkedin",
-        external_id="li-1",
-        description=desc,
+    job = RawJob(
+        title="Test Job",
+        url="https://example.com/job/1",
+        source="greenhouse",
+        external_id="gh-1",
+        raw_data={"id": "gh-1", "title": "Test Job"},
     )
-    job_b = NormalizedJob(
-        title="AI Coach",
-        url="https://indeed.com/jobs/2",
-        source="indeed",
-        external_id="in-2",
-        description=desc,
-    )
-
-    mock_scraper = MagicMock()
-    mock_scraper.fetch = AsyncMock(return_value=[object(), object()])
-    mock_scraper.normalize = MagicMock(side_effect=[job_a, job_b])
-
-    # Hash dedup lets both through (different URL/source)
-    async def _pass_through(batch):
-        return batch, 0
 
     with (
-        patch(
-            "app.services.scrape_orchestrator.load_sources_config",
-            return_value={"sources": {"linkedin": {}}},
-        ),
-        patch("app.services.scrape_orchestrator.SourceRegistry.get", return_value=lambda: mock_scraper),
-        patch.object(DeduplicationService, "filter_batch", new=AsyncMock(side_effect=_pass_through)),
+        patch("app.services.scrape_orchestrator.load_sources_config", return_value={"sources": {"greenhouse": {}}}),
+        patch("app.services.scrape_orchestrator.SourceRegistry.get") as mock_get,
+        patch.object(orch.raw_job_repo, "insert_batch", new=AsyncMock(return_value=0)) as mock_insert,
     ):
-        result = await orch.run(source_id="linkedin", store=False)
+        mock_scraper = MagicMock()
+        mock_scraper.fetch = AsyncMock(return_value=[job])
+        mock_get.return_value = lambda: mock_scraper
 
-    # Both fetched, dedup passed both, MinHash caught the second.
+        result = await orch.run(source_id="greenhouse", store=False)
+
+    assert result.jobs_found == 1
+    assert result.jobs_stored == 0
+    mock_insert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_stores_raw_jobs_with_store_true():
+    """run(store=True) calls raw_job_repo.insert_batch and reflects count in response."""
+    from app.models.job import RawJob
+
+    orch = _make_orchestrator()
+
+    jobs = [
+        RawJob(
+            title="Job A",
+            url="https://example.com/job/a",
+            source="adzuna",
+            external_id="az-1",
+            raw_data={"id": "az-1", "title": "Job A"},
+        ),
+        RawJob(
+            title="Job B",
+            url="https://example.com/job/b",
+            source="adzuna",
+            external_id="az-2",
+            raw_data={"id": "az-2", "title": "Job B"},
+        ),
+    ]
+
+    with (
+        patch("app.services.scrape_orchestrator.load_sources_config", return_value={"sources": {"adzuna": {}}}),
+        patch("app.services.scrape_orchestrator.SourceRegistry.get") as mock_get,
+        patch.object(orch.raw_job_repo, "insert_batch", new=AsyncMock(return_value=2)) as mock_insert,
+    ):
+        mock_scraper = MagicMock()
+        mock_scraper.fetch = AsyncMock(return_value=jobs)
+        mock_get.return_value = lambda: mock_scraper
+
+        result = await orch.run(source_id="adzuna", store=True)
+
     assert result.jobs_found == 2
-    assert result.jobs_duplicate >= 1, (
-        f"MinHash should have caught at least one near-duplicate, got "
-        f"jobs_duplicate={result.jobs_duplicate}"
-    )
-
-    # Cleanup to not pollute other tests
-    reset_dq_context()
-
-
-# ---------------------------------------------------------------------------
-# DE-FOLLOWUP-04: scoring-profile.local.yaml is loaded when present
-# ---------------------------------------------------------------------------
+    assert result.jobs_stored == 2
+    mock_insert.assert_called_once()
+    inserted_list = mock_insert.call_args[0][0]
+    assert len(inserted_list) == 2
 
 
 @pytest.mark.asyncio
-async def test_run_uses_loaded_profile_when_local_file_present():
-    """When config/scoring-profile.local.yaml exists, its archetypes/keywords
-    drive Stage-1 scoring instead of the empty default profile."""
-    from app.scoring.types import ScoringProfile
+async def test_run_wraps_dict_results_in_raw_job():
+    """Scrapers returning dicts are wrapped into RawJob with raw_data=full dict."""
+    from app.models.job import RawJob
+    from app.repositories.raw_jobs import RawJobRepository
 
     orch = _make_orchestrator()
-    loaded_profile = ScoringProfile(
-        id="florian",
-        archetypes={"bridge-builder": 0.9},
-        keywords_positive=["AI", "Coaching"],
-    )
 
-    captured: dict = {}
+    raw_dict = {
+        "title": "Python Dev",
+        "url": "https://example.com/job/py-1",
+        "source": "indeed",
+        "external_id": "in-99",
+        "company": "ACME",
+        "location": "Berlin",
+        "description": "We need a Python dev.",
+    }
 
-    async def _capture_run_stage1(jobs, profile):
-        captured["profile"] = profile
-        return []
+    captured: list[list[RawJob]] = []
 
-    with (
-        patch(
-            "app.services.scrape_orchestrator.load_scoring_profile",
-            return_value=loaded_profile,
-        ),
-        patch(
-            "app.services.scrape_orchestrator.load_sources_config",
-            return_value={"sources": {"greenhouse": {}}},
-        ),
-        patch("app.services.scrape_orchestrator.SourceRegistry.get") as mock_get,
-        patch(
-            "app.services.scrape_orchestrator.ScoringPipeline.run_stage1",
-            new=AsyncMock(side_effect=_capture_run_stage1),
-        ),
-    ):
-        from app.models.job import NormalizedJob
-
-        job = NormalizedJob(
-            title="AI Coaching Lead",
-            url="https://example.com/jobs/1",
-            source="greenhouse",
-            external_id="gh-1",
-            description="We are hiring an AI coach.",
-        )
-        mock_scraper = MagicMock()
-        mock_scraper.fetch = AsyncMock(return_value=[object()])
-        mock_scraper.normalize = MagicMock(return_value=job)
-        mock_get.return_value = lambda: mock_scraper
-
-        async def _pass_through(batch):
-            return batch, 0
-
-        from app.deduplication.dedup import DeduplicationService
-
-        with patch.object(
-            DeduplicationService, "filter_batch", new=AsyncMock(side_effect=_pass_through)
-        ):
-            await orch.run(source_id="greenhouse", store=False)
-
-    used = captured.get("profile")
-    assert used is not None, "ScoringPipeline.run_stage1 was not called"
-    assert used.id == "florian"
-    assert used.archetypes == {"bridge-builder": 0.9}
-    assert "AI" in used.keywords_positive
-
-
-@pytest.mark.asyncio
-async def test_run_falls_back_to_empty_profile_when_no_local_file():
-    """When the local profile file is absent, run() keeps the previous
-    empty-default behavior — no errors, profile_id passed through."""
-    orch = _make_orchestrator()
+    async def _capture(raw_jobs: list[RawJob]) -> int:
+        captured.append(raw_jobs)
+        return len(raw_jobs)
 
     with (
-        patch(
-            "app.services.scrape_orchestrator.load_scoring_profile",
-            return_value=None,
-        ),
-        patch(
-            "app.services.scrape_orchestrator.load_sources_config",
-            return_value={"sources": {}},
-        ),
+        patch("app.services.scrape_orchestrator.load_sources_config", return_value={"sources": {"indeed": {}}}),
         patch("app.services.scrape_orchestrator.SourceRegistry.get") as mock_get,
+        patch.object(orch.raw_job_repo, "insert_batch", new=_capture),
     ):
         mock_scraper = MagicMock()
-        mock_scraper.fetch = AsyncMock(return_value=[])
+        mock_scraper.fetch = AsyncMock(return_value=[raw_dict])
         mock_get.return_value = lambda: mock_scraper
 
-        result = await orch.run(source_id="greenhouse", profile_id="consumer-x")
+        await orch.run(source_id="indeed", store=True)
 
-    assert result.profile_id == "consumer-x"
-    assert result.jobs_found == 0
+    assert len(captured) == 1
+    rj = captured[0][0]
+    assert isinstance(rj, RawJob)
+    # raw_data must hold the full source payload — not '{}'
+    assert rj.raw_data == raw_dict
+    assert rj.title == "Python Dev"
 
 
 # ---------------------------------------------------------------------------
-# Slice B: step 4a description resolution runs and reports count
+# Load-profile config helpers (preserved from previous suite — they test
+# app/config.py directly and don't touch the orchestrator; keep them here
+# as they're load-bearing smoke tests for the config layer).
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_run_resolves_descriptions_before_scoring():
-    """run() invokes DescriptionResolver.resolve_batch on new jobs and records
-    the count on the response."""
-    from app.deduplication.dedup import DeduplicationService
-    from app.models.job import NormalizedJob
-
-    orch = _make_orchestrator()
-
-    job = NormalizedJob(
-        title="AI Coach",
-        url="https://acme.softgarden.io/job/1",
-        source="adzuna",
-        external_id="ad-1",
-        description="",  # thin -> resolution target
-    )
-
-    async def _pass_through(batch):
-        return batch, 0
-
-    async def _fake_resolve(jobs):
-        for j in jobs:
-            j.description = "backfilled full description from origin"
-        return len(jobs)
-
-    with (
-        patch(
-            "app.services.scrape_orchestrator.load_sources_config",
-            return_value={"sources": {"adzuna": {}}},
-        ),
-        patch(
-            "app.services.scrape_orchestrator.load_resolution_config",
-            return_value={"resolution": {"enabled": True}},
-        ),
-        patch("app.services.scrape_orchestrator.SourceRegistry.get", return_value=lambda: _mk_scraper(job)),
-        patch.object(DeduplicationService, "filter_batch", new=AsyncMock(side_effect=_pass_through)),
-        patch(
-            "app.services.scrape_orchestrator.DescriptionResolver.resolve_batch",
-            new=AsyncMock(side_effect=_fake_resolve),
-        ),
-    ):
-        result = await orch.run(source_id="adzuna", store=False)
-
-    assert result.descriptions_resolved == 1
-
-
-def _mk_scraper(job):
-    s = MagicMock()
-    s.fetch = AsyncMock(return_value=[object()])
-    s.normalize = MagicMock(return_value=job)
-    return s
 
 
 def test_load_scoring_profile_returns_none_when_no_file_exists(tmp_path, monkeypatch):
-    """load_scoring_profile() returns None when neither the .local.yaml
-    override NOR the committed scoring-profile.yaml default exists.
-    (DE-FOLLOWUP-11: resolution order is now .local -> .yaml -> None.)"""
     from app import config as config_module
 
     config_module.load_scoring_profile.cache_clear()
@@ -330,8 +191,6 @@ def test_load_scoring_profile_returns_none_when_no_file_exists(tmp_path, monkeyp
 
 
 def test_load_scoring_profile_parses_local_yaml_when_present(tmp_path, monkeypatch):
-    """load_scoring_profile() returns the .local.yaml override when present
-    even if a sibling scoring-profile.yaml default also exists."""
     from app import config as config_module
 
     config_module.load_scoring_profile.cache_clear()
@@ -346,7 +205,6 @@ def test_load_scoring_profile_parses_local_yaml_when_present(tmp_path, monkeypat
         "  - Agile\n",
         encoding="utf-8",
     )
-    # Sanity: a default also exists but .local must win
     (config_dir / "scoring-profile.yaml").write_text(
         "id: default\nname: Default\narchetypes: {}\n",
         encoding="utf-8",
@@ -362,9 +220,6 @@ def test_load_scoring_profile_parses_local_yaml_when_present(tmp_path, monkeypat
 
 
 def test_load_scoring_profile_falls_back_to_committed_default(tmp_path, monkeypatch):
-    """When only the committed scoring-profile.yaml exists (no .local override),
-    that default profile is returned. (DE-FOLLOWUP-11 unblock: production
-    Coolify deploys without a .local file now get a populated profile.)"""
     from app import config as config_module
 
     config_module.load_scoring_profile.cache_clear()

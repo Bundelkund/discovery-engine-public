@@ -21,3 +21,6 @@ config/*.local.yaml
 # enumeration outputs (regeneratable, not source)
 scripts/out/
 scripts/out_enum.log
+
+# graphify / understand-anything AST cache (regeneratable, not source)
+app/graphify-out/

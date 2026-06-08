@@ -3,6 +3,7 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 
+from app.config import get_settings
 from app.models.job import ScoredJob
 from app.repositories.base import BaseRepository
 
@@ -10,7 +11,14 @@ logger = logging.getLogger(__name__)
 
 
 class JobRepository(BaseRepository):
-    TABLE = "jobs"
+    # TABLE is resolved at runtime from the JOBS_TABLE env var so both
+    # reads and writes follow the active shelf without a restart or redeploy.
+    # Access via self._table rather than the class constant everywhere.
+
+    @property
+    def _table(self) -> str:
+        """Active jobs shelf: JOBS_TABLE env var (default 'jobs_v2')."""
+        return get_settings().jobs_table
 
     def get_coverage_metrics(self) -> dict:
         """Return coverage metrics for /health.
@@ -27,7 +35,7 @@ class JobRepository(BaseRepository):
 
         total = 0
         try:
-            res = self.client.table(self.TABLE).select("id", count="exact").limit(1).execute()
+            res = self.client.table(self._table).select("id", count="exact").limit(1).execute()
             total = res.count or 0
             metrics["jobs_total"] = total
         except Exception as exc:
@@ -36,7 +44,7 @@ class JobRepository(BaseRepository):
         if total > 0:
             try:
                 res = (
-                    self.client.table(self.TABLE)
+                    self.client.table(self._table)
                     .select("id", count="exact")
                     .not_.is_("location_normalized", "null")
                     .limit(1)
@@ -50,7 +58,7 @@ class JobRepository(BaseRepository):
             try:
                 # dq_flags default is {}; count rows where it has been populated.
                 res = (
-                    self.client.table(self.TABLE)
+                    self.client.table(self._table)
                     .select("id", count="exact")
                     .neq("dq_flags", "{}")
                     .limit(1)
@@ -64,7 +72,7 @@ class JobRepository(BaseRepository):
         try:
             cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             res = (
-                self.client.table(self.TABLE)
+                self.client.table(self._table)
                 .select("id", count="exact")
                 .gte("scraped_at", cutoff)
                 .limit(1)
@@ -76,10 +84,21 @@ class JobRepository(BaseRepository):
 
         return metrics
 
-    async def insert_batch(self, jobs: list[ScoredJob], profile_id: str) -> int:
+    async def upsert(self, jobs: list[ScoredJob]) -> int:
+        """Upsert refined jobs into the active shelf (self._table, default jobs_v2).
+
+        ON CONFLICT (source, external_id):
+          - insert: sets first_seen_at = last_seen_at = now(), status = 'active'
+          - update: refreshes last_seen_at + all mutable fields; preserves first_seen_at.
+
+        No profile_id — agnostik invariant.
+        Returns the count of rows touched (inserted + updated).
+        """
         if not jobs:
             return 0
+
         rows = []
+        now = datetime.now(timezone.utc).isoformat()
         for job in jobs:
             rows.append(
                 {
@@ -94,12 +113,11 @@ class JobRepository(BaseRepository):
                     "score_stage_1": job.score_stage_1,
                     "archetype": job.archetype,
                     "company_domain": job.company_domain,
-                    "profile_id": profile_id if profile_id else None,
                     "scraped_at": (
-                        job.posted_at.isoformat()
-                        if job.posted_at
-                        else datetime.now(timezone.utc).isoformat()
+                        job.posted_at.isoformat() if job.posted_at else now
                     ),
+                    "last_seen_at": now,
+                    "status": "active",
                     # Bundle-B additive columns
                     "location_normalized": job.location_normalized,
                     "location_lat": job.location_lat,
@@ -109,27 +127,50 @@ class JobRepository(BaseRepository):
                     "dq_flags": job.dq_flags or {},
                 }
             )
-        inserted = 0
+
+        upserted = 0
         for row in rows:
             try:
+                table = self._table
                 await asyncio.to_thread(
-                    lambda r=row: self.client.table(self.TABLE).insert(r).execute()
+                    lambda r=row, t=table: self.client.table(t)
+                    .upsert(r, on_conflict="source,external_id")
+                    .execute()
                 )
-                inserted += 1
-            except Exception as e:
-                if "23505" in str(e):
-                    logger.debug(f"Duplicate skipped: {row['url'][:60]}")
-                else:
-                    logger.error(
-                        "insert_job_failed",
-                        extra={"url": row["url"][:80], "error": str(e)},
-                    )
-        return inserted
+                upserted += 1
+            except Exception as exc:
+                logger.error(
+                    "upsert_job_failed",
+                    extra={"url": row["url"][:80], "error": str(exc)},
+                )
+        return upserted
+
+    async def mark_expired(self, threshold_days: int) -> int:
+        """Mark jobs in the active shelf as 'expired' when last_seen_at is older than threshold_days.
+
+        Does NOT delete rows — preserves history. Returns count of rows updated.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=threshold_days)).isoformat()
+        table = self._table
+        try:
+            result = await asyncio.to_thread(
+                lambda: self.client.table(table)
+                .update({"status": "expired"})
+                .lt("last_seen_at", cutoff)
+                .eq("status", "active")
+                .execute()
+            )
+            updated = len(result.data) if result.data else 0
+            logger.info("mark_expired", extra={"threshold_days": threshold_days, "updated": updated})
+            return updated
+        except Exception as exc:
+            logger.error("mark_expired_failed", extra={"error": str(exc)})
+            return 0
 
     async def get_by_id(self, job_id: str) -> dict | None:
         """Get a single job by ID."""
         result = await asyncio.to_thread(
-            lambda: self.client.table(self.TABLE)
+            lambda: self.client.table(self._table)
             .select("*")
             .eq("id", job_id)
             .execute()
@@ -164,7 +205,7 @@ class JobRepository(BaseRepository):
         prefilter on location_lat/location_lon and is refined with a
         Python-Haversine post-filter at the route layer.
         """
-        q = self.client.table(self.TABLE).select("*", count="exact")
+        q = self.client.table(self._table).select("*", count="exact")
 
         # -- MUST filters (AC-001) --
 

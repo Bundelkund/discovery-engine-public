@@ -23,5 +23,4 @@ class EnrichmentContext(BaseModel):
     """Context passed through enrichment pipeline."""
 
     jobs: list[dict] = Field(default_factory=list)
-    profile_id: str | None = None
     source: str = ""

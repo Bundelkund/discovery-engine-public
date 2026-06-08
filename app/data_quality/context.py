@@ -1,8 +1,13 @@
-"""Shared DQ context — single process-wide singleton for MinHash, GeoNames, Rules.
+"""Shared DQ context — process-wide singleton for GeoNames and Rules.
 
 The orchestrator and the /health endpoint must observe the same state: if they
-each own their own MinHashDedup / LocationNormalizer / RulesEngine instances,
-metrics drift and duplicate detection becomes inconsistent.
+each own their own LocationNormalizer / RulesEngine instances, metrics drift and
+rule evaluation becomes inconsistent.
+
+MinHash state was decoupled from this singleton in Spec-11 / A4: MinHashDedup
+is now DB-backed and requires a supabase client. It is instantiated directly
+by whatever service needs it (e.g. the refine pipeline) rather than being held
+here as process-wide in-mem LSH state.
 """
 from __future__ import annotations
 
@@ -12,7 +17,6 @@ from pathlib import Path
 
 from app.config import load_data_quality_config
 from app.data_quality.location import LocationNormalizer
-from app.data_quality.minhash import MinHashDedup
 from app.data_quality.rules import RulesEngine, compute_activation_date
 
 logger = logging.getLogger(__name__)
@@ -21,17 +25,10 @@ _GEONAMES_CSV = Path(__file__).parent.parent.parent / "data" / "geonames-de-subs
 
 
 class DQContext:
-    """Shared DQ state: MinHash LSH, location normalizer, rules engine."""
+    """Shared DQ state: location normalizer, rules engine."""
 
     def __init__(self) -> None:
         cfg = load_data_quality_config()
-        mh_cfg = cfg.minhash
-        self.minhash = MinHashDedup(
-            threshold=mh_cfg.threshold,
-            num_perm=mh_cfg.num_perm,
-            shingle_size=mh_cfg.shingle_size,
-            seed=getattr(mh_cfg, "seed", 42),
-        )
         self.location_normalizer = LocationNormalizer(_GEONAMES_CSV)
 
         try:

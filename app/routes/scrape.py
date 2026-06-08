@@ -8,7 +8,6 @@ from app.services.scrape_orchestrator import ScrapeOrchestrator
 
 
 class ScrapeRequest(BaseModel):
-    profile_id: Optional[str] = None
     location: Optional[str] = None
     limit: Optional[int] = None
     store: bool = True
@@ -24,7 +23,6 @@ def make_scrape_router(source_id: str) -> APIRouter:
         orchestrator = ScrapeOrchestrator(supabase)
         result = await orchestrator.run(
             source_id=source_id,
-            profile_id=request.profile_id,
             location=request.location,
             limit=request.limit,
             store=request.store,

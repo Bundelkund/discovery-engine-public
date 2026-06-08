@@ -22,7 +22,7 @@ async def enrich_company(domain: str, supabase=Depends(get_supabase)):
     enrichment_config = load_enrichment_config().get("enrichment", {})
     pipeline = EnrichmentPipeline(enrichment_config)
 
-    ctx = EnrichmentContext(profile_id="", source="manual")
+    ctx = EnrichmentContext(source="manual")
     results = await pipeline.run([company], ctx)
 
     if results:

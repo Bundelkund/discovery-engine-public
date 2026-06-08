@@ -5,6 +5,7 @@ from jobspy import scrape_jobs
 
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
+from app.services.terms_provider import resolve_search_terms
 from app.sources.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ class IndeedScraper(BaseScraper):
 
     async def fetch(self, config: dict) -> list[RawJob]:
         try:
-            search_terms = config.get("search_terms", ["AI Consultant"])
+            search_terms = config.get("search_terms") or resolve_search_terms("indeed")
             country = config.get("country", "germany")
             limit = config.get("limit", 50)
             proxy = config.get("proxy")

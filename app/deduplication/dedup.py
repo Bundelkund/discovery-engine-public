@@ -6,18 +6,33 @@ logger = logging.getLogger(__name__)
 
 
 class DeduplicationService:
-    def __init__(self, supabase_client):
+    def __init__(self, supabase_client, jobs_table: str = "jobs"):
+        """Initialise with a Supabase client and the active shelf table name.
+
+        *jobs_table* defaults to "jobs" (current shelf). Pass "jobs_v2" post-cutover
+        so _batch_check queries the correct table. A2 (storage) provides the active
+        table name via its read-switch and passes it here at construction time.
+        """
         self.client = supabase_client
+        self.jobs_table = jobs_table
 
     async def filter_batch(
         self, jobs: list[NormalizedJob]
-    ) -> tuple[list[NormalizedJob], int]:
+    ) -> tuple[list[NormalizedJob], int, set[int]]:
         """Filter out duplicate jobs using batch queries.
 
         3-tier dedup: external_id -> URL -> content_hash.
+
+        Returns:
+            (kept_jobs, dup_count, duplicate_indices) where
+            - kept_jobs: jobs whose index is NOT in duplicate_indices
+            - dup_count: total number of duplicates found (== len(duplicate_indices))
+            - duplicate_indices: set[int] of positions in the input *jobs* list
+              that matched an existing record; callers (e.g. refine pipeline) use
+              this to mark the corresponding raw_jobs as status='duplicate'.
         """
         if not jobs:
-            return [], 0
+            return [], 0, set()
 
         duplicate_indices: set[int] = set()
 
@@ -73,25 +88,32 @@ class DeduplicationService:
                         duplicate_indices.add(idx)
 
         except Exception as e:
-            logger.error(f"Batch dedup failed: {e}")
+            logger.error("batch_dedup_failed: %s", e)
 
         filtered = [
             job for i, job in enumerate(jobs) if i not in duplicate_indices
         ]
         dup_count = len(duplicate_indices)
-        logger.info(f"Dedup: {dup_count} duplicates from {len(jobs)} jobs")
-        return filtered, dup_count
+        logger.info(
+            "dedup_filter_batch",
+            extra={"total": len(jobs), "duplicates": dup_count, "table": self.jobs_table},
+        )
+        return filtered, dup_count, duplicate_indices
 
     async def _batch_check(
         self, column: str, values: list[str]
     ) -> set[str]:
-        """Check which values already exist in jobs table, in chunks of 500."""
+        """Check which values already exist in the active shelf table, in chunks of 500.
+
+        Targets self.jobs_table (set at construction time) rather than hardcoding "jobs",
+        so post-cutover the query goes to jobs_v2. A2's read-switch provides the name.
+        """
         existing: set[str] = set()
         for start in range(0, len(values), 500):
             chunk = values[start : start + 500]
             try:
                 result = (
-                    self.client.table("jobs")
+                    self.client.table(self.jobs_table)
                     .select(column)
                     .in_(column, chunk)
                     .execute()
@@ -101,6 +123,7 @@ class DeduplicationService:
                 )
             except Exception as e:
                 logger.warning(
-                    f"Batch check on '{column}' failed: {e}"
+                    "batch_check_failed",
+                    extra={"column": column, "table": self.jobs_table, "error": str(e)},
                 )
         return existing

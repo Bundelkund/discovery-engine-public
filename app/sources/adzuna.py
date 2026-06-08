@@ -5,6 +5,7 @@ import httpx
 from app.config import get_settings
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
+from app.services.terms_provider import resolve_search_terms
 from app.sources.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ class AdzunaScraper(BaseScraper):
 
             country = config.get("country", "de")
             limit = config.get("limit", 50)
-            search_terms = config.get("search_terms", ["AI Consultant"])
+            search_terms = config.get("search_terms") or resolve_search_terms("adzuna")
 
             all_jobs = []
             async with httpx.AsyncClient(timeout=30.0) as client:

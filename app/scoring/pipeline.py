@@ -40,7 +40,6 @@ class ScoringPipeline:
                 **job.model_dump(),
                 score_stage_1=int(total_score),
                 archetype=best_archetype,
-                profile_id=profile.id,
             )
             results.append(scored)
         return results

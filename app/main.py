@@ -18,6 +18,7 @@ from app.routes.enrich import enrich_router
 from app.routes.jobs_api import jobs_api_router
 from app.routes.companies_api import companies_api_router
 from app.routes.scan import scan_router
+from app.routes.refine import refine_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,3 +43,4 @@ app.include_router(enrich_router)
 app.include_router(jobs_api_router)
 app.include_router(companies_api_router)
 app.include_router(scan_router)
+app.include_router(refine_router)

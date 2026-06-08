@@ -2,6 +2,10 @@ minhash:
   threshold: 0.9
   num_perm: 128
   shingle_size: 5
+  band_width: 4    # bands = num_perm / band_width = 32; tune alongside threshold
+
+dedup:
+  window_days: 42  # retention window for dedup_memory table; entries older than this are purged
 
 rules:
   flag:

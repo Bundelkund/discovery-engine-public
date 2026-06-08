@@ -1,4 +1,3 @@
-import hashlib
 from abc import ABC, abstractmethod
 
 from app.models.job import NormalizedJob, RawJob
@@ -12,17 +11,11 @@ class BaseScraper(ABC):
         """Fetch jobs from source. MUST catch all exceptions, return [] on failure."""
 
     def normalize(self, raw: RawJob) -> NormalizedJob:
-        content = f"{raw.url}|{raw.title}|{raw.company}".lower().strip()
-        content_hash = hashlib.sha256(content.encode()).hexdigest()[:16]
-        return NormalizedJob(
-            title=raw.title,
-            url=raw.url,
-            company=raw.company,
-            location=raw.location,
-            description=raw.description,
-            salary=raw.salary,
-            source=self.source_id,
-            external_id=raw.external_id,
-            posted_at=raw.posted_at,
-            content_hash=content_hash,
-        )
+        """Thin shim — the canonical zerlegen (parse) step now lives in the refine
+        pipeline (app/services/refine_pipeline.py `parse_raw`). The store-first fetch
+        path does NOT call this; it is retained only for adapter-level unit tests that
+        assert a scraper can map its RawJob to a NormalizedJob with a content_hash.
+        """
+        from app.services.refine_pipeline import parse_raw
+
+        return parse_raw(raw, default_source=self.source_id)

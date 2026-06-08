@@ -7,6 +7,7 @@ import httpx
 
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
+from app.services.terms_provider import resolve_search_terms
 from app.sources.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ class ArbeitsagenturScraper(BaseScraper):
 
     async def fetch(self, config: dict) -> list[RawJob]:
         try:
-            search_terms = config.get("search_terms", ["AI Consultant"])
+            search_terms = config.get("search_terms") or resolve_search_terms("arbeitsagentur")
             location = config.get("location", "")          # "" -> nationwide
             umkreis = config.get("umkreis", 50)
             size = config.get("size", 50)

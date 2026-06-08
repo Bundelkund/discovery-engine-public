@@ -78,15 +78,9 @@ def test_negative_keyword_penalty():
 def test_filter_by_threshold():
     pipe = _make_pipeline()
     jobs = [
-        ScoredJob(
-            title="High", url="http://1", source="t", score_stage_1=50, profile_id="t"
-        ),
-        ScoredJob(
-            title="Low", url="http://2", source="t", score_stage_1=10, profile_id="t"
-        ),
-        ScoredJob(
-            title="Edge", url="http://3", source="t", score_stage_1=30, profile_id="t"
-        ),
+        ScoredJob(title="High", url="http://1", source="t", score_stage_1=50),
+        ScoredJob(title="Low", url="http://2", source="t", score_stage_1=10),
+        ScoredJob(title="Edge", url="http://3", source="t", score_stage_1=30),
     ]
     kept, discarded = pipe.filter_by_threshold(jobs)
     assert len(kept) == 2
