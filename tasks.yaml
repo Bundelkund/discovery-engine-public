@@ -306,3 +306,41 @@ tasks:
       enriched_at setzen. Lazy/quota-aware (Hunter daily_limit 500): zuerst Firmen
       mit >=1 relevanten Job. Best-effort Domain-Resolution fuer Slugs.
     acceptance: "Firmen mit relevanten Jobs haben domain + company_profiles-Eintrag; Hunter-Quota nicht ueberschritten."
+
+  - id: engine-recall-ranking
+    title: GET /jobs Relevanz-Ranking (ts_rank) — Recall-Blocker E1 + Phrase-Bug E2
+    status: in_progress
+    priority: P0
+    depends_on: []
+    detail: >
+      Tenant-Live-Test (2026-06-08, nach FTS-Hotfix 3b4e306): /jobs 200/50 jobs/2.9s,
+      aber matches_upserted=0. Root-Cause NICHT threshold sondern RECALL: keywords_positive
+      lief als UNGERANKTE PostgREST-wfts-OR-Menge. 'new work' unquoted = 'new' & 'work' ->
+      tausende engl. Description-Treffer; florians 86 echte Agile-Coach-Jobs sortierten
+      hinter Pos 500 -> erreichten den Scorer nie (auch bei limit=500: 0 Agile-Coach zurueck).
+      E1: PostgREST .order() kann nicht ORDER BY ts_rank() -> neue Postgres-RPC
+      search_jobs_ranked(p_table, ...) filtert+rankt+paginiert serverseitig
+      (ORDER BY ts_rank(to_tsvector('simple', title||' '||description), tsquery) DESC).
+      Filter-Paritaet mit JobRepository.query() ausser max_distance_km (Distanz+Keywords
+      faellt auf Legacy-PostgREST-Pfad zurueck, kein bbox-RPC). p_table allowlisted
+      ('jobs'|'jobs_v2') -> selbe Funktion bedient post-cutover-Regal, keine 2. Migration.
+      E2: RPC baut tsquery via websearch_to_tsquery serverseitig -> "..."-Phrasen honoriert
+      ('"new work"' -> new <-> work). Der wfts-Pfad strippte Quotes (byte-identisch quoted=unquoted).
+    done_note: >
+      CODE-COMPLETE 2026-06-08 (Deploy ausstehend). migrations/jobs-search-ranked.sql LIVE
+      appliziert (CREATE OR REPLACE, idempotent, project guocdgjpbvsvcvchgolm). app/repositories/jobs.py
+      query() routet keywords_positive (ohne max_distance_km) auf client.rpc('search_jobs_ranked').
+      LIVE-VERIFY gegen prod-DB: florians 4 Terme -> Top = 'Senior Agile Coach (f/m/d)',
+      'Agile Coach / Scrum Master (m/w/d)', 'Scrum Master | Agile Coach (m/w/d)' (vorher US-Clearance-
+      Scrum-Master @ score 28 ganz oben). total=5103, limit=50 sauber/schnell (kein 8s-Timeout).
+      E2: websearch_to_tsquery('simple','new work')='new'&'work' vs '"new work"'='new'<->'work'.
+      Tests: test_jobs_api.py 20 passed (RPC-Pfad + Distance-Fallback). ruff clean.
+      DEPLOY: jobs.py + migration auf main bringen + Coolify redeploy (chirurgisch wie 3b4e306,
+      NICHT der feature/engine-pipeline-overhaul-Branch). DANN tenant run_match_loop re-test ->
+      matches_upserted > 0 erwartet, DANN tenant TM-CAL-01 threshold gegen gerankte Verteilung.
+    acceptance: "GET /jobs keyword-Suche ORDER BY ts_rank DESC; florians Top-Treffer = Agile-Coach/DE-Rollen (verifiziert); Phrase-Quoting honoriert (E2); tenant matches_upserted > 0 nach Deploy."
+    reconcile_note: >
+      Branch-Divergenz: diese tasks.yaml ist die main-Linie (5ac2bb8+3b4e306). Der
+      feature/engine-pipeline-overhaul-Branch hat eigene Tasks (jobs-fts-search, tenant-module-integration)
+      die hier fehlen. Beim spaeteren Cutover-Merge: engine-recall-ranking mit jobs-fts-search-done_note
+      zusammenfuehren (beide beschreiben den /jobs-FTS-Pfad).
