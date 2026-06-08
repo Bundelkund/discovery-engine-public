@@ -83,8 +83,23 @@ tasks:
 
   - id: jobs-fts-search
     title: FTS (tsvector+GIN) fuer /jobs keyword-Filter — ILIKE-Seq-Scan abloesen
-    status: backlog
+    status: in_progress
     priority: P1
+    done_note: >
+      CODE-COMPLETE 2026-06-08 (Deploy ausstehend). Florian gab Token-Semantik (config
+      'simple') frei. Umgesetzt via EXPRESSION-GIN-Indizes statt stored column (kein
+      Table-Rewrite): migrations/jobs-fts-index.sql legt gin(to_tsvector('simple',title))
+      + gin(...,description) auf public.jobs UND jobs_v2 an (live appliziert).
+      app/repositories/jobs.py query() keywords_positive: ILIKE -> PostgREST
+      `title.wfts(simple).{term}` -> matcht die Index-Expression -> BitmapOr.
+      EXPLAIN florians echte 4 Terme (agile coach/scrum master/new work/
+      organisationsentwicklung), count="exact"-Form: 5403ms Seq Scan -> 252ms (~20x),
+      weit unter 8s. 322 tests green, ruff clean.
+      DEPLOY: NUR den jobs.py-query()-Diff auf main cherry-picken + redeploy. NICHT den
+      ganzen feature/engine-pipeline-overhaul-Branch deployen — JOBS_TABLE default
+      'jobs_v2' wuerde den (noch blockierten, WA-DE-07) Cutover ausloesen -> leeres Regal.
+      keywords_negative + SHOULD-Filter unveraendert. trgm-Indizes bleiben (helfen noch
+      negative-keyword ILIKE); spaeter prunebar.
     depends_on: []
     detail: >
       Tenant live-test (2026-06-08): /jobs 500 bei Profilen mit >=4 search-terms.
