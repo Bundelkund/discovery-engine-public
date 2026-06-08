@@ -83,10 +83,10 @@ tasks:
 
   - id: jobs-fts-search
     title: FTS (tsvector+GIN) fuer /jobs keyword-Filter — ILIKE-Seq-Scan abloesen
-    status: in_progress
+    status: done
     priority: P1
     done_note: >
-      CODE-COMPLETE 2026-06-08 (Deploy ausstehend). Florian gab Token-Semantik (config
+      DEPLOYED 2026-06-08 (live in prod). Florian gab Token-Semantik (config
       'simple') frei. Umgesetzt via EXPRESSION-GIN-Indizes statt stored column (kein
       Table-Rewrite): migrations/jobs-fts-index.sql legt gin(to_tsvector('simple',title))
       + gin(...,description) auf public.jobs UND jobs_v2 an (live appliziert).
@@ -95,11 +95,14 @@ tasks:
       EXPLAIN florians echte 4 Terme (agile coach/scrum master/new work/
       organisationsentwicklung), count="exact"-Form: 5403ms Seq Scan -> 252ms (~20x),
       weit unter 8s. 322 tests green, ruff clean.
-      DEPLOY: NUR den jobs.py-query()-Diff auf main cherry-picken + redeploy. NICHT den
-      ganzen feature/engine-pipeline-overhaul-Branch deployen — JOBS_TABLE default
-      'jobs_v2' wuerde den (noch blockierten, WA-DE-07) Cutover ausloesen -> leeres Regal.
-      keywords_negative + SHOULD-Filter unveraendert. trgm-Indizes bleiben (helfen noch
-      negative-keyword ILIKE); spaeter prunebar.
+      DEPLOYED: surgical Hotfix 3b4e306 auf main (mirrors feature 085b48b — NUR jobs.py-query
+      + Test + Migration-Record, KEIN Overhaul) -> git push private main -> Coolify. Diff-grep
+      auf JOBS_TABLE/refine/upsert leer -> kein Cutover-Impact; Live-Engine serviert weiter
+      public.jobs (10513). keywords_negative + SHOULD-Filter unveraendert (positive-FTS
+      verkleinert Kandidaten zuerst -> negative-ILIKE laeuft auf wenigen Rows). trgm-Indizes
+      bleiben (stuetzen negative-ILIKE); spaeter prunebar.
+      OFFEN Tenant-seitig (nicht Engine): TM-CAL-01 DEFAULT_THRESHOLD 40->~35 — sonst 0 matches
+      trotz schneller Engine ('Senior Scrum Master'=38 < 40).
     depends_on: []
     detail: >
       Tenant live-test (2026-06-08): /jobs 500 bei Profilen mit >=4 search-terms.
@@ -350,8 +353,9 @@ tasks:
       discovery-engine.konektos.de/scan/discover-lever, X-API-Key=N8N. INAKTIV angelegt.
       Smoke lokal: 202->409-lock->done, fetch/scanner/seed rc=0, seed_summary "0 inserted, 49 updated".
       da859bb LIVE in prod (auto-deployed ~360s, /health softgarden gruen -> scan.py discover-lever +
-      db-slugs aktiv). OFFEN (User, 2 Schritte): (1) THEIRSTACK_API_KEY in Coolify-Env setzen (sonst
-      failt discover-lever-fetch wenn WF feuert). (2) n8n WF wC41eZ0xxYGLRVlA aktivieren (monthly 8th).
+      db-slugs aktiv). VOLLSTAENDIG (2026-06-08, User): (1) THEIRSTACK_API_KEY in Coolify-Env gesetzt.
+      (2) n8n WF wC41eZ0xxYGLRVlA aktiviert -> discover-lever feuert monatlich am 8. (26 4 8 * *) gegen
+      prod, X-API-Key=N8N. Erster scharfer Lauf naechster 8.; ats_scan_runs zeigt das Ergebnis.
 
   - id: progressive-enrichment
     epic: ats-registry
