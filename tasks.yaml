@@ -418,7 +418,8 @@ tasks:
 
   - id: refine-decouple
     title: refine_pipeline entkoppeln — gate + score + enrich raus, resolve bleibt
-    status: backlog
+    status: done
+    done_note: "LIVE 2026-06-09 (Commit A 2b4ef90). quality_gate.py ersetzt title_gate, ScoringPipeline+_enrich aus Step 6 raus, enrich-on-read in companies_api. resolve unveraendert."
     priority: P1
     depends_on: []
     detail: >
@@ -450,7 +451,8 @@ tasks:
 
   - id: jobs-api-score-removal
     title: Read-Pfad — score_keyword-Sort + score_stage_1 aus /jobs-API entfernen
-    status: backlog
+    status: done
+    done_note: "LIVE 2026-06-09 (Commit A 2b4ef90). sort-Enum ^(recency)$, score_stage_1+final_score aus responses.py raus. Kein Consumer nutzt sort=score_keyword (verifiziert)."
     priority: P1
     depends_on: [refine-decouple]
     detail: >
@@ -464,7 +466,8 @@ tasks:
 
   - id: score-column-drop
     title: Schema — jobs_v2.score_stage_1 Spalte droppen
-    status: backlog
+    status: done
+    done_note: "DONE 2026-06-09. Code: Commit C 9f70166 (ScoredJob.score_stage_1 raus, jobs.py upsert sendet nicht mehr). Redeploy 9f70166 live 11:39. DDL ALTER TABLE jobs_v2 DROP COLUMN score_stage_1 appliziert (Florian-delegiert, Supabase Mgmt-API). Verifiziert: nur v1 jobs hat Spalte noch (frozen). v1 unangetastet."
     priority: P2
     depends_on: [refine-decouple, jobs-api-score-removal]
     detail: >
@@ -479,7 +482,8 @@ tasks:
 
   - id: scoring-code-deletion
     title: Toten Scoring-Code hart loeschen (Phase-5 Cleanup)
-    status: backlog
+    status: done
+    done_note: "LIVE 2026-06-09 (Commit B 619c8be). app/scoring/* + scorer_registry + config/scoring.yaml + archetypes.yaml geloescht; load_scoring_* aus config.py; health.py scorers-Zeile raus; chaos_guard_smoke entkoppelt. Enrichment/Companies/DescriptionResolver erhalten. 316 Tests gruen."
     priority: P2
     depends_on: [refine-decouple, jobs-api-score-removal]
     detail: >
