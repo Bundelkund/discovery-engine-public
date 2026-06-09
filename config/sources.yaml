@@ -4,6 +4,15 @@
 # then run:  node scripts/sync-search-profile.js  &&  git push private main
 # Generated from search-profile.yaml meta.updated=Fri Jun 05 2026 02:00:00 GMT+0200 (Mitteleuropäische Sommerzeit)
 # ============================================================================
+
+# ---- Term provider (Slice 1.3 / TM-CUT-01 cutover, flipped 2026-06-09) -----
+# union -> Engine pulls recall terms from tenant.search_terms (anonymous DISTINCT)
+# via GET /tenant/search-terms/union. The per-source search_terms below are then
+# INERT (UnionTermsProvider ignores them) — kept transitional until full retire.
+# Flip prereq verified: tenant union == search-profile.yaml roleUnion (24 terms).
+terms_provider: union
+terms_provider_url: "https://tenant.konektos.de"
+
 sources:
   indeed:
     enabled: true
