@@ -49,10 +49,10 @@ AS $$
   WITH del AS (
     DELETE FROM public.raw_jobs
     WHERE status IN ('refined', 'rejected', 'duplicate')
-      AND created_at < now() - make_interval(days => window_days)
+      AND ingested_at < now() - make_interval(days => window_days)
     RETURNING 1
   )
   SELECT count(*)::int FROM del;
 $$;
--- Adjust the timestamp column name above if raw_jobs uses scraped_at/inserted_at
--- instead of created_at — verify with: \d public.raw_jobs
+-- Timestamp column verified 2026-06-09: raw_jobs uses `ingested_at`
+-- (no created_at/scraped_at/inserted_at). Re-verify with: \d public.raw_jobs
