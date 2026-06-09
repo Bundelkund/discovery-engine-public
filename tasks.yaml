@@ -503,3 +503,34 @@ tasks:
       feature/engine-pipeline-overhaul-Branch hat eigene Tasks (jobs-fts-search, tenant-module-integration)
       die hier fehlen. Beim spaeteren Cutover-Merge: engine-recall-ranking mit jobs-fts-search-done_note
       zusammenfuehren (beide beschreiben den /jobs-FTS-Pfad).
+
+  - id: terms-provider-union-flip
+    title: Recall-Cutover — terms_provider local -> union (TM-CUT-01)
+    status: done
+    priority: P1
+    depends_on: [refine-decouple]
+    detail: >
+      Engine zieht Recall-Terms nicht mehr aus sources.yaml search_terms, sondern aus
+      tenant.search_terms via GET /tenant/search-terms/union (anonym, profil-agnostisch).
+      Prereq erfuellt: TM-NET-01 (tenant.konektos.de public) + tenant union == search-profile.yaml
+      roleUnion (24 Terms, deckungsgleich nach sync-profile-to-tenant.js live-run). Damit ist
+      florians Profil NUR noch in tenant.search_terms, Engine nutzer-agnostisch.
+    done_note: "LIVE 2026-06-09 (Commit eb9b16a, redeploy 12:13). sources.yaml terms_provider:union + url=https://tenant.konektos.de. sync-search-profile.js Generator emittiert den Flip (re-run-safe, kein Clobber, commit florian-knowledge 9384118). Lokal verifiziert: UnionTermsProvider -> 24 Terms vom live Tenant. Runtime-Scrape-Verify offen (deployed DE_API_KEY noetig, Florian-seitig)."
+
+  - id: sources-search-terms-retire
+    title: Inerte sources.yaml search_terms + sync-search-profile.js retiren (auto-abloesend)
+    status: backlog
+    priority: P3
+    depends_on: [terms-provider-union-flip]
+    detail: >
+      Nach union-flip sind die per-source search_terms-Arrays in sources.yaml INERT
+      (UnionTermsProvider ignoriert sie) und sync-search-profile.js (rendert sources.yaml)
+      ist toter Parallel-Pfad zu sync-profile-to-tenant.js. Beide speisen aus derselben SoT
+      (search-profile.yaml) -> kein Drift, aber no-dead-code: nach 1-2 stabilen Cron-Zyklen
+      mit union-Recall die search_terms-Arrays aus dem Generator-Template entfernen +
+      sync-search-profile.js retiren (sync-profile-to-tenant.js wird alleiniger SoT->Recall-Pfad).
+    acceptance: >
+      Generator emittiert keine per-source search_terms mehr (nur terms_provider:union + nicht-term
+      Felder); sync-search-profile.js entweder geloescht oder auf reinen Drift-Detektor reduziert;
+      Verify: 2 Cron-Zyklen union-Recall stabil (jobs_last_24h > 0) bevor Retire; florian-knowledge
+      Doku-Kette (search-profile.yaml Header) auf sync-profile-to-tenant.js umgestellt.
