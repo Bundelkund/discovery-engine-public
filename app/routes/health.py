@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends
 from app.data_quality.context import get_dq_context
 from app.dependencies import get_supabase
 from app.registry.enricher_registry import EnricherRegistry
-from app.registry.scorer_registry import ScorerRegistry
 from app.registry.source_registry import SourceRegistry
 from app.repositories.jobs import JobRepository
 
@@ -51,7 +50,6 @@ async def health(supabase=Depends(get_supabase)):
     return {
         "status": "ok",
         "sources": SourceRegistry.registered_ids(),
-        "scorers": ScorerRegistry.registered_ids(),
         "enrichers": EnricherRegistry.registered_ids(),
         "data_quality": data_quality,
         "coverage": coverage,

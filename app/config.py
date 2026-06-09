@@ -1,13 +1,10 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
-
-if TYPE_CHECKING:
-    from app.scoring.types import ScoringProfile
 
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 REPO_ROOT = Path(__file__).parent.parent
@@ -71,11 +68,6 @@ def load_sources_config() -> dict:
 
 
 @lru_cache
-def load_scoring_config() -> dict:
-    return load_yaml("scoring.yaml")
-
-
-@lru_cache
 def load_enrichment_config() -> dict:
     return load_yaml("enrichment.yaml")
 
@@ -83,11 +75,6 @@ def load_enrichment_config() -> dict:
 @lru_cache
 def load_resolution_config() -> dict:
     return load_yaml("resolution.yaml")
-
-
-@lru_cache
-def load_archetypes_config() -> dict:
-    return load_yaml("archetypes.yaml")
 
 
 # ---------------------------------------------------------------------------
@@ -135,38 +122,6 @@ def load_data_quality_config() -> DataQualityConfig:
     return DataQualityConfig.model_validate(raw)
 
 
-# ---------------------------------------------------------------------------
-# Single-User Scoring Profile (optional override)
-# ---------------------------------------------------------------------------
-
-
-@lru_cache
-def load_scoring_profile() -> "ScoringProfile | None":
-    """Load the engine scoring profile, if one is configured.
-
-    The engine is profile-agnostic by default: no committed profile ships,
-    so this returns None in a stock deploy and RefinePipeline falls back to
-    an empty ScoringProfile (title-gate disabled -> keep all, score 0,
-    store_threshold 0 -> store everything). Per-profile scoring lives in the
-    tenant module (tenant.search_terms + tenant matching.py), not here.
-
-    Resolution order (an opt-in escape hatch for a deploy that DOES want
-    engine-side scoring, analogous to portals.yaml / portals.local.yaml):
-      1. config/scoring-profile.local.yaml  (gitignored override)
-      2. config/scoring-profile.yaml        (committed — none ships by default)
-      3. None                               (agnostic default)
-
-    Cache invalidates only on process restart; profiles change rarely.
-
-    History: a committed scoring-profile.yaml (id "florian") used to ship to
-    populate jobs.archetype on the single-tenant Coolify deploy (DE-FOLLOWUP-11,
-    2026-05-31). Removed 2026-06-09 when the engine went profile-agnostic —
-    Florian's profile now lives only in the tenant module.
-    """
-    from app.scoring.types import ScoringProfile
-
-    path = resolve_local_override(REPO_ROOT / "config" / "scoring-profile.yaml")
-    if not path.exists():
-        return None
-    with open(path) as f:
-        return ScoringProfile.model_validate(yaml.safe_load(f))
+# Engine scoring profile removed 2026-06-09: the engine is profile-agnostic.
+# Per-profile scoring lives in the tenant module (tenant.search_terms +
+# tenant matching.py). The refine pipeline no longer scores or gates on a profile.

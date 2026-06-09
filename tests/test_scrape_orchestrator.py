@@ -134,7 +134,6 @@ async def test_run_stores_raw_jobs_with_store_true():
 async def test_run_wraps_dict_results_in_raw_job():
     """Scrapers returning dicts are wrapped into RawJob with raw_data=full dict."""
     from app.models.job import RawJob
-    from app.repositories.raw_jobs import RawJobRepository
 
     orch = _make_orchestrator()
 
@@ -171,71 +170,3 @@ async def test_run_wraps_dict_results_in_raw_job():
     # raw_data must hold the full source payload — not '{}'
     assert rj.raw_data == raw_dict
     assert rj.title == "Python Dev"
-
-
-# ---------------------------------------------------------------------------
-# Load-profile config helpers (preserved from previous suite — they test
-# app/config.py directly and don't touch the orchestrator; keep them here
-# as they're load-bearing smoke tests for the config layer).
-# ---------------------------------------------------------------------------
-
-
-def test_load_scoring_profile_returns_none_when_no_file_exists(tmp_path, monkeypatch):
-    from app import config as config_module
-
-    config_module.load_scoring_profile.cache_clear()
-    monkeypatch.setattr(config_module, "REPO_ROOT", tmp_path)
-
-    assert config_module.load_scoring_profile() is None
-    config_module.load_scoring_profile.cache_clear()
-
-
-def test_load_scoring_profile_parses_local_yaml_when_present(tmp_path, monkeypatch):
-    from app import config as config_module
-
-    config_module.load_scoring_profile.cache_clear()
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "scoring-profile.local.yaml").write_text(
-        "id: florian\n"
-        "name: Florian\n"
-        "archetypes:\n"
-        "  coach: 0.7\n"
-        "keywords_positive:\n"
-        "  - Agile\n",
-        encoding="utf-8",
-    )
-    (config_dir / "scoring-profile.yaml").write_text(
-        "id: default\nname: Default\narchetypes: {}\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config_module, "REPO_ROOT", tmp_path)
-
-    profile = config_module.load_scoring_profile()
-    assert profile is not None
-    assert profile.id == "florian"
-    assert profile.archetypes == {"coach": 0.7}
-    assert profile.keywords_positive == ["Agile"]
-    config_module.load_scoring_profile.cache_clear()
-
-
-def test_load_scoring_profile_falls_back_to_committed_default(tmp_path, monkeypatch):
-    from app import config as config_module
-
-    config_module.load_scoring_profile.cache_clear()
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    (config_dir / "scoring-profile.yaml").write_text(
-        "id: default\n"
-        "name: Default Profile\n"
-        "archetypes:\n"
-        "  trainer: 0.5\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config_module, "REPO_ROOT", tmp_path)
-
-    profile = config_module.load_scoring_profile()
-    assert profile is not None
-    assert profile.id == "default"
-    assert profile.archetypes == {"trainer": 0.5}
-    config_module.load_scoring_profile.cache_clear()

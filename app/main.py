@@ -5,10 +5,9 @@ from fastapi import FastAPI
 
 # Import the plugin packages to trigger their self-registration side effects.
 # Each package's __init__.py imports every concrete plugin module, which in turn
-# applies the @SourceRegistry.register / @ScorerRegistry.register / @EnricherRegistry.register
-# decorators at import time.
+# applies the @SourceRegistry.register / @EnricherRegistry.register decorators at
+# import time. (Scoring was removed 2026-06-09 — the engine is profile-agnostic.)
 import app.sources  # noqa: F401
-import app.scoring  # noqa: F401
 import app.enrichment  # noqa: F401
 
 from app.registry.source_registry import SourceRegistry

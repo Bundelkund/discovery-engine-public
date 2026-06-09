@@ -8,7 +8,7 @@ tests had all passed — this is the gate that exercises the wiring against live
 Flow exercised:
   scrape(themuse, small) -> raw_jobs(status='new')
   -> RefinePipeline.run  (parse -> exact-dedup vs jobs_v2 -> near-dedup minhash
-     -> dq -> location -> title_gate -> score -> upsert jobs_v2 -> mark_status)
+     -> dq -> location -> quality_gate -> resolve -> upsert jobs_v2 -> mark_status)
   -> verify every fetched raw_job reached EXACTLY ONE terminal state (no strand)
   -> verify dedup actually fired against the existing jobs_v2 shelf (not a flood)
   -> re-run refine (must be a no-op: idempotency)
@@ -44,7 +44,6 @@ for line in (REPO / ".env").read_text(encoding="utf-8").splitlines():
 
 # Trigger plugin self-registration (decorators run at import — like main.py).
 import app.sources    # noqa: E402,F401
-import app.scoring    # noqa: E402,F401
 import app.enrichment  # noqa: E402,F401
 
 from app.dependencies import get_supabase                       # noqa: E402
