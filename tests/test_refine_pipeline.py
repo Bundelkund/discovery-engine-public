@@ -66,6 +66,34 @@ def test_parse_raw_backfills_default_source():
     assert nj.source == "indeed"
 
 
+def test_content_hash_collapses_cross_source_duplicate():
+    """The same amberra posting from 5 boards (different url/company-legal-form/
+    location) must hash to ONE canonical content_hash."""
+    from app.services.refine_pipeline import _content_hash
+
+    title = "Agile AI Transformation Coach - all genders welcome"
+    pairs = [
+        (title, "amberra GmbH"),   # adzuna / careerjet / jooble
+        (title, "amberra GmbH"),
+        (title, "amberra GmbH"),
+        (title, "amberra"),        # linkedin / personio
+        (title, "amberra"),
+    ]
+    hashes = {_content_hash(t, c) for t, c in pairs}
+    assert len(hashes) == 1, f"cross-source dup must collapse, got {hashes}"
+
+
+def test_content_hash_ignores_url_and_gender_suffix():
+    from app.services.refine_pipeline import _content_hash
+
+    # url is not an input at all; gender/bracket suffix variants collapse
+    assert _content_hash("AI Coach (m/w/d)", "Foo AG") == _content_hash(
+        "AI Coach", "Foo"
+    )
+    # genuinely different roles stay distinct
+    assert _content_hash("AI Coach", "Foo") != _content_hash("Data Engineer", "Foo")
+
+
 # --- agnostic: a job that matched no old profile signal is now REFINED ---
 
 

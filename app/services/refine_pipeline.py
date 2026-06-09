@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 
 from app.config import (
     load_data_quality_config,
@@ -56,9 +57,48 @@ REJECTED = "rejected"
 DUPLICATE = "duplicate"
 
 
-def _content_hash(url: str, title: str, company: str) -> str:
-    """sha256(url|title|company)[:16] — the canonical content hash (was BaseScraper)."""
-    content = f"{url}|{title}|{company}".lower().strip()
+# Legal-form tokens stripped from company names before hashing: the SAME employer
+# appears as "amberra GmbH" on one board and "amberra" on another, which would
+# otherwise split the canonical hash. Keep this set in lock-step with the SQL
+# backfill migration (migrations/…cross_source_dedup) — the Python ingest hash and
+# the migrated hash MUST be byte-identical or re-ingests won't match the shelf.
+_LEGAL_FORMS = frozenset(
+    {"gmbh", "mbh", "ag", "se", "kg", "kgaa", "ug", "ohg", "gbr",
+     "co", "ev", "ltd", "llc", "inc", "plc", "holding"}
+)
+
+
+def _norm_hash_field(s: str) -> str:
+    """Normalise a title/company for the canonical content hash.
+
+    Lower-case, drop bracketed suffixes ("(m/w/d)", "(all genders)"), map every
+    non-alphanumeric run to a single space, trim. So the SAME posting rendered
+    slightly differently across boards collapses to one string.
+    """
+    s = (s or "").lower()
+    s = re.sub(r"\(.*?\)", " ", s)       # "(m/w/d)", "(all genders)" → space
+    s = re.sub(r"[^a-z0-9]+", " ", s)    # punctuation / unicode → space
+    return " ".join(s.split())
+
+
+def _norm_company(s: str) -> str:
+    """Like _norm_hash_field but also strip legal-form tokens (GmbH/AG/…)."""
+    return " ".join(t for t in _norm_hash_field(s).split() if t not in _LEGAL_FORMS)
+
+
+def _content_hash(title: str, company: str) -> str:
+    """sha256(norm(title)|norm_company(company))[:16] — SOURCE-INDEPENDENT identity.
+
+    url is deliberately OMITTED: the same posting scraped from N job boards
+    (adzuna/linkedin/indeed/personio/…) carries N different urls but the same
+    title+company. Hashing the url defeated the only cross-source dedup tier
+    (DeduplicationService Tier 3), so every board produced a separate jobs_v2 row.
+    location is ALSO omitted: the same job renders as "Berlin", "Berlin-Mitte",
+    "Wedding, Berlin", "Berlin, Berlin, Germany" across boards — too noisy to be a
+    stable identity (it splits the hash instead of collapsing it). Company legal
+    forms are stripped so "amberra GmbH" == "amberra".
+    """
+    content = f"{_norm_hash_field(title)}|{_norm_company(company)}"
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
@@ -80,7 +120,6 @@ def parse_raw(raw: RawJob | dict, default_source: str = "") -> NormalizedJob:
         source = raw.source or default_source
         external_id = raw.external_id
         posted_at = raw.posted_at
-        existing_hash = raw.content_hash
     else:
         title = raw.get("title", "") or ""
         url = raw.get("url", "") or ""
@@ -91,9 +130,12 @@ def parse_raw(raw: RawJob | dict, default_source: str = "") -> NormalizedJob:
         source = raw.get("source", "") or default_source
         external_id = raw.get("external_id", "") or ""
         posted_at = raw.get("posted_at")
-        existing_hash = raw.get("content_hash", "") or ""
 
-    content_hash = existing_hash or _content_hash(url, title, company)
+    # Always recompute the canonical hash — do NOT honour a pre-supplied
+    # existing_hash: legacy raws carry the old url-based hash, which would keep
+    # cross-source duplicates apart. The canonical (title|company|location) hash
+    # must win so Tier-3 dedup can collapse them.
+    content_hash = _content_hash(title, company)
 
     # external_id guarantee — jobs_v2 upsert PK is (source, external_id) NOT NULL.
     if not external_id:

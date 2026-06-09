@@ -534,3 +534,84 @@ tasks:
       Felder); sync-search-profile.js entweder geloescht oder auf reinen Drift-Detektor reduziert;
       Verify: 2 Cron-Zyklen union-Recall stabil (jobs_last_24h > 0) bevor Retire; florian-knowledge
       Doku-Kette (search-profile.yaml Header) auf sync-profile-to-tenant.js umgestellt.
+
+  - id: cross-source-dedup-hash
+    title: Cross-Source-Dedup — content_hash source-unabhaengig (url raus) + intra-batch + Backfill
+    status: done
+    priority: P1
+    done_note: >
+      DONE 2026-06-09. (A) _content_hash(title, company) — url UND location raus
+      (location renderte als Berlin/Berlin-Mitte/"Wedding, Berlin"/"Berlin, Berlin, Germany"
+      fuer EINEN Job -> spaltete den Hash), company legal-form-strip (_LEGAL_FORMS gmbh/ag/
+      se/kg/... -> "amberra GmbH"==="amberra"). Call-Site recomputet kanonisch (kein
+      existing_hash-Shortcut). (B) filter_batch Tier-4 intra-batch-collapse (eid/url/hash-map:
+      ersten Index behalten, Rest dup). (C) Migration cross-source-dedup-content-hash.sql:
+      content_hash neu (SQL == Python, beide -> 9ad73f81d9d29046 fuer amberra) + Dupe-Delete
+      (pro Hash 1, hoechste desc_len). Prod: jobs_v2 10514 -> 9391 (1123 Dupes weg),
+      distinct_hash == total. amberra-Coach 5 Quellen -> 1 (personio-Volltext 14712 behalten);
+      voize Manager/Engineer korrekt getrennt. Tests: test_dedup.py (+intra-batch) +
+      test_refine_pipeline.py (+amberra 5->1, +url/gender-ignore) -> 21 passed. WICHTIG:
+      nach Massen-UPDATE+DELETE ZWINGEND VACUUM(ANALYZE) public.jobs_v2 (sonst stale-stats ->
+      /jobs-FTS statement_timeout). FOLGE-FINDING -> Task jobs-fts-40term-timeout.
+    context: >
+      Dieselbe Ausschreibung aus N Job-Boards landet als N jobs_v2-Rows -> N Tenant-Matches
+      (Florian sah Amberra x5, Brandung x4, voize x3 in der Match-Liste). Evidenz (jobs_v2):
+      5x identischer Titel "Agile AI Transformation Coach" / Firma amberra aus linkedin/jooble/
+      personio/adzuna/careerjet -> 5 VERSCHIEDENE content_hashes, desc_len 0..14712.
+      Zwei Defekte:
+      (1) content_hash = sha256(url|title|company) in refine_pipeline.py:_content_hash -> die url
+          steckt im Hash -> jeder Aggregator anderer Hash -> 3-Tier-Dedup (external_id->url->
+          content_hash in DeduplicationService.filter_batch) hat KEINEN source-unabhaengigen Tier.
+      (2) MinHash-near-dup keyt auf description (refine_pipeline.py:234 is_near_duplicate(desc)) ->
+          Descriptions leer/uneinheitlich (median 0) -> feuert nie; refine_pipeline.py:353
+          'if not desc: continue' -> leere-desc-Rows tragen keine Bands -> unsichtbar fuer Dedup.
+    detail: >
+      3 Teile (alle noetig — Formel allein dedupt weder Bestand noch Gleich-Batch-Ankunft):
+      A. FORMEL (app/services/refine_pipeline.py): _content_hash(title, company, location) —
+         url RAUS, _norm() lowert + strippt Klammer-Suffixe "(m/w/d)"/"(all genders)" +
+         kollabiert Nicht-alnum zu space. Call-Site Z.96: 'existing_hash or' ENTFERNEN
+         (sonst ueberlebt der alte url-Hash bei re-ingest) -> immer kanonisch.
+      B. INTRA-BATCH (app/deduplication/dedup.py:filter_batch): filter_batch markiert dup nur
+         wenn Hash SCHON in DB. N gleich-Hash-Jobs in EINEM Batch (keiner in DB) ueberleben alle.
+         -> innerhalb hash_map (und url_map/eid_map) ersten Index behalten, Rest in
+         duplicate_indices. Collapse VOR dem DB-_batch_check.
+      C. BACKFILL-MIGRATION (migrations/, SQL gegen jobs_v2): content_hash mit neuer Formel
+         neu berechnen (Postgres-seitig regexp_replace/lower), dann Dupes loeschen pro
+         (neuer) content_hash 1 behalten — bevorzugt hoechste length(description) (personio-Volltext)
+         bzw. neuestes scraped_at. Sonst bleibt der Bestand (inkl. der 110 Tenant-Matches) doppelt.
+      Sekundaer (optional, eigener Task): near-dup-Fallback auf title+company wenn desc leer.
+    acceptance:
+      - "_content_hash ohne url; amberra x5 -> 1 content_hash (Unit-Test mit den 5 realen Titeln/Quellen)"
+      - "Call-Site Z.96 recomputet kanonisch (kein existing_hash-Shortcut)"
+      - "filter_batch collapst intra-batch gleich-Hash -> kept enthaelt 1, Rest in duplicate_indices (neuer Test)"
+      - "Migration: jobs_v2.content_hash neu + Dupe-Delete (pro Hash 1, hoechste desc_len); Row-Count vorher/nachher geloggt"
+      - "Re-Run Tenant match_loop: Amberra/Brandung/voize je 1x in tenant.matches; Sheet entdoppelt"
+      - "pytest tests/test_dedup.py tests/test_refine_pipeline.py gruen"
+
+  - id: jobs-fts-40term-timeout
+    title: GET /jobs FTS bricht bei vielen keyword-Terms am statement_timeout (Window-Truncate)
+    status: backlog
+    priority: P1
+    context: >
+      Beobachtet 2026-06-09: Tenant match_loop fetcht recency-Window 1500 (3x500 via offset)
+      mit florians 40 role-Terms als keywords_positive. Pro /jobs-Request ~33% Wahrscheinlichkeit
+      0 Rows -> die Query ueberschreitet das server-seitige statement_timeout (9s). Client-Retry
+      (engine_client: 5xx/timeout, max 2) hilft NICHT: die Query bleibt >9s, jeder Versuch 500.
+      P(alle 3 Pages ok) ~ 0.67^3 ~ 30% -> match_loop liefert oft nur 500 statt 1500 Jobs
+      (oder 0 wenn Page 1 kippt) -> Tenant-Matches unterzaehlen (62 statt ~110). Verschaerft durch
+      die provisorische 24->40-Term-Expansion (florian-knowledge TM-SCORE-01): mehr OR-Terms =
+      groesserer FTS-Match-Set + teureres ts_rank-Sort. ANALYZE/VACUUM nach der Dedup-Migration
+      half der ersten Page, aber tiefere offset-Pages bleiben grenzwertig.
+    detail: >
+      Hebel (einer reicht ggf.): (1) FTS-Query optimieren — keywords_positive als EIN
+      tsquery (OR der Terms) statt N-fachem ILIKE/Teilausdruck; STORED search_tsv (existiert:
+      idx_jobs_v2_search_tsv) konsequent nutzen; ts_rank ggf. auf Top-N begrenzen.
+      (2) statement_timeout fuer den /jobs-Read-Pfad gezielt anheben (z.B. SET LOCAL
+      statement_timeout=20s in der Query-Fn) — schnellster Hotfix.
+      (3) Keyset-Pagination (WHERE scraped_at < cursor) statt OFFSET — tiefe OFFSETs sind teuer.
+      (4) Term-Zahl deckeln/voraggregieren (haengt an TM-SCORE-01 Token-Scorer: weniger,
+      praezisere Terms statt 40 Einzelwoerter).
+    acceptance:
+      - "GET /jobs mit 40 keywords_positive + sort=recency + offset 0/500/1000 liefert 3x 500 deterministisch (kein statement_timeout)"
+      - "match_loop window=1500 fetcht reproduzierbar 1500 Jobs (nicht 0/500)"
+      - "p95-Latenz /jobs Multi-Term unter dem statement_timeout dokumentiert"

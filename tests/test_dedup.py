@@ -5,14 +5,24 @@ from app.deduplication.dedup import DeduplicationService
 from app.models.job import NormalizedJob
 
 
-def _make_job(url="http://test.com/1", title="Test Job", company="TestCo", external_id=""):
+def _make_job(
+    url="http://test.com/1",
+    title="Test Job",
+    company="TestCo",
+    external_id="",
+    content_hash=None,
+):
+    # content_hash defaults to one DERIVED FROM url so distinct jobs get distinct
+    # hashes — otherwise the intra-batch collapse (Tier 4) would treat unrelated
+    # fixtures as duplicates. Pass content_hash explicitly to simulate a real
+    # cross-source duplicate (same canonical hash, different url).
     return NormalizedJob(
         title=title,
         url=url,
         source="test",
         company=company,
         description="desc",
-        content_hash="abc123",
+        content_hash=content_hash or f"hash-{url}",
         external_id=external_id,
     )
 
@@ -79,6 +89,26 @@ def test_dedup_passes_new_jobs():
     assert len(kept) == 2
     assert dup_count == 0
     assert dup_indices == set()
+
+
+def test_dedup_collapses_intra_batch_same_content_hash():
+    """Tier 4: N NEW jobs (none on the shelf) sharing a content_hash but with
+    different urls — the same posting from N boards — collapse to ONE kept job."""
+    mock_client = MagicMock()
+    # nothing exists on the shelf yet (all DB tiers return empty)
+    mock_client.table.return_value.select.return_value.in_.return_value.execute.return_value.data = []
+
+    service = DeduplicationService(mock_client)
+    jobs = [
+        _make_job("http://adzuna.de/1", external_id="adzuna-1", content_hash="canon"),
+        _make_job("http://linkedin.de/2", external_id="linkedin-2", content_hash="canon"),
+        _make_job("http://personio.de/3", external_id="personio-3", content_hash="canon"),
+    ]
+    kept, dup_count, dup_indices = asyncio.run(service.filter_batch(jobs))
+
+    assert len(kept) == 1, "cross-source same-hash jobs must collapse to one"
+    assert dup_count == 2
+    assert dup_indices == {1, 2}  # first index kept, rest dropped
 
 
 def test_dedup_empty_list():

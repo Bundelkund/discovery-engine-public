@@ -110,6 +110,17 @@ class DeduplicationService:
             except Exception as e:
                 logger.error("batch_dedup_hash_failed: %s", e)
 
+        # Tier 4: INTRA-batch collapse. The DB tiers above only flag a job as a
+        # duplicate when its key already exists ON THE SHELF — so N jobs that share
+        # a key but arrive in the SAME batch (none on the shelf yet) all survive.
+        # That is exactly how the same posting from N boards slipped through. For
+        # each key with >1 not-yet-dropped indices, keep the first and drop the rest.
+        for key_map in (eid_map, url_map, hash_map):
+            for idxs in key_map.values():
+                survivors = [i for i in idxs if i not in duplicate_indices]
+                for idx in survivors[1:]:
+                    duplicate_indices.add(idx)
+
         filtered = [
             job for i, job in enumerate(jobs) if i not in duplicate_indices
         ]
