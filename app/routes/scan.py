@@ -13,6 +13,7 @@ Both stages run scripts/seed_ats_companies.py afterwards to upsert into ats_comp
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import subprocess
@@ -251,8 +252,9 @@ async def trigger_scan(
                             detail=f"unknown stage '{stage}' (revalidate|discover|discover-lever)")
 
     # one run per stage at a time -> no overlapping CC fetches
-    running = (
-        supabase.table("ats_scan_runs")
+    # supabase-py is sync — wrap in to_thread so the route never blocks the loop.
+    running = await asyncio.to_thread(
+        lambda: supabase.table("ats_scan_runs")
         .select("id")
         .eq("stage", stage)
         .eq("status", "running")
@@ -262,10 +264,12 @@ async def trigger_scan(
     if running.data:
         raise HTTPException(status_code=409, detail=f"a '{stage}' run is already in progress")
 
-    ins = supabase.table("ats_scan_runs").insert(
-        {"stage": stage, "status": "running",
-         "stats": {"ats": ats, "limit": limit} if (ats or limit) else None}
-    ).execute()
+    ins = await asyncio.to_thread(
+        lambda: supabase.table("ats_scan_runs").insert(
+            {"stage": stage, "status": "running",
+             "stats": {"ats": ats, "limit": limit} if (ats or limit) else None}
+        ).execute()
+    )
     run_id = ins.data[0]["id"]
     if stage == "discover-lever":
         background_tasks.add_task(_run_lever, run_id, max_credits)
@@ -277,8 +281,8 @@ async def trigger_scan(
 
 @scan_router.get("/runs", dependencies=[Depends(require_scope("jobs:read"))])
 async def list_runs(limit: int = Query(20, ge=1, le=100), supabase=Depends(get_supabase)):
-    res = (
-        supabase.table("ats_scan_runs")
+    res = await asyncio.to_thread(
+        lambda: supabase.table("ats_scan_runs")
         .select("*")
         .order("started_at", desc=True)
         .limit(limit)

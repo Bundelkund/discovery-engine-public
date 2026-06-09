@@ -14,6 +14,7 @@ Schema (dedup_memory):
 """
 import hashlib
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -140,14 +141,34 @@ class MinHashDedup:
     # Public API
     # ------------------------------------------------------------------
 
+    def required_band_matches(self) -> int:
+        """How many of this document's bands must collide with a SINGLE stored
+        document before it counts as a near-duplicate, derived from ``threshold``.
+
+        LSH: for two documents of Jaccard similarity ``s``, the probability that
+        any one band (``band_width`` lanes) matches is ``s ** band_width``. So the
+        *expected* number of shared bands at the configured similarity threshold is
+        ``num_bands * threshold ** band_width``. We require at least that many real
+        collisions — this is what makes ``threshold`` actually do something (the old
+        code declared a match on ANY single band, an effective threshold of only
+        ~0.42 regardless of the configured value). (F3)
+
+        Example: threshold=0.9, num_perm=128, band_width=4 → 32 bands →
+        ceil(32 * 0.9**4) = 21 of 32 bands must match (only near-identical text).
+        """
+        num_bands = self.num_perm // self.band_width
+        return max(1, math.ceil(num_bands * (self.threshold ** self.band_width)))
+
     def is_near_duplicate(self, text: str) -> bool:
         """Return True if *text* is a near-duplicate of any stored entry.
 
-        Queries dedup_memory for any band_hash collision WITHIN the retention
-        window (seen_at >= now - window_days); a single shared band is sufficient
-        to declare a near-duplicate match. Entries older than the window are
-        ignored even before purge_old() physically removes them, so the dedup
-        memory genuinely "forgets" after window_days.
+        Queries dedup_memory for band_hash collisions WITHIN the retention window
+        (seen_at >= now - window_days), then groups the hits by the stored
+        document's content_hash and requires at least ``required_band_matches()``
+        distinct shared bands against a SINGLE stored document before declaring a
+        match — so the configured ``threshold`` is honoured. Entries older than the
+        window are ignored even before purge_old() physically removes them, so the
+        dedup memory genuinely "forgets" after window_days.
         """
         if not text:
             return False
@@ -158,23 +179,38 @@ class MinHashDedup:
         if not band_hashes:
             return False
 
+        required = self.required_band_matches()
         window_start = (
             datetime.now(tz=timezone.utc) - timedelta(days=self.window_days)
         ).isoformat()
         try:
             result = (
                 self.client.table("dedup_memory")
-                .select("band_hash")
+                .select("band_hash, content_hash")
                 .in_("band_hash", band_hashes)
                 .gte("seen_at", window_start)
-                .limit(1)
                 .execute()
             )
-            is_dup = bool(result.data)
+            rows = result.data or []
+            if not rows:
+                return False
+
+            # Count distinct matching bands per stored document. A near-duplicate
+            # needs `required` shared bands against the SAME content_hash, not one
+            # band shared with any/many documents.
+            bands_per_doc: dict[str, set[str]] = {}
+            for row in rows:
+                ch = row.get("content_hash") or ""
+                bh = row.get("band_hash") or ""
+                if ch and bh:
+                    bands_per_doc.setdefault(ch, set()).add(bh)
+
+            best = max((len(b) for b in bands_per_doc.values()), default=0)
+            is_dup = best >= required
             if is_dup:
                 logger.info(
                     "near_duplicate_detected",
-                    extra={"match": result.data[0].get("band_hash", "")[:40]},
+                    extra={"matched_bands": best, "required": required},
                 )
             return is_dup
         except Exception as exc:

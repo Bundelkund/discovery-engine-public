@@ -197,6 +197,31 @@ async def test_upsert_partial_failure_leaves_failed_row_new(monkeypatch):
     assert summary["errors"] >= 1
 
 
+# --- F7: near-dedup bands persisted ONLY after a successful upsert ---
+
+
+@pytest.mark.asyncio
+async def test_minhash_add_only_for_refined_rows(monkeypatch):
+    """F7 regression: minhash.add() must run ONLY for rows that reached the shelf.
+
+    Old code add()'d every Step-3 survivor eagerly. A row whose upsert later failed
+    then left its band hashes in dedup_memory, so the retry pass dropped it as a
+    phantom near-duplicate — permanent loss of a job that was never stored. With the
+    fix, the failed row 'b' gets no add(), so it is re-evaluated cleanly next pass."""
+    p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
+    monkeypatch.setattr(
+        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
+    )
+    # 'a' lands on the shelf, 'b' fails inside the repo.
+    p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True, False])
+
+    summary = await p.run()
+
+    # Exactly one persist — for the refined row only. (Old code: 2 eager adds.)
+    assert p.minhash.add.call_count == 1
+    assert summary["refined"] == 1
+
+
 # --- #5: a classify failure on one row rejects it and the pass continues ---
 
 

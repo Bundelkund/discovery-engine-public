@@ -133,11 +133,10 @@ class RefinePipeline:
         self.job_repo = JobRepository(supabase_client)
         self.company_repo = CompanyRepository(supabase_client)
 
-        # Dedup against the active shelf (jobs_table follows the read-switch).
-        from app.config import get_settings
-
-        jobs_table = get_settings().jobs_table
-        self.dedup = DeduplicationService(supabase_client, jobs_table=jobs_table)
+        # Dedup against the active shelf. No snapshot — DeduplicationService now
+        # resolves jobs_table from settings per call, so it can never diverge from
+        # JobRepository's table after a config reload. (F5)
+        self.dedup = DeduplicationService(supabase_client)
 
         # MinHash is DB-backed (no longer on DQContext) — build it here from config.
         dq_cfg = load_data_quality_config()
@@ -217,8 +216,14 @@ class RefinePipeline:
                 endstate[survivor_ids[idx]] = DUPLICATE
             survivors, survivor_ids = self._compact(survivors, survivor_ids, endstate)
 
-        # --- Step 3: dedup (near). is_near_duplicate(description) per survivor;
-        #     else add() to the rolling LSH memory. Sync calls -> to_thread. ---
+        # --- Step 3: dedup (near). is_near_duplicate(description) per survivor
+        #     against the rolling LSH memory (cross-batch history). We do NOT add()
+        #     here: the band hashes are persisted to dedup_memory only AFTER a row
+        #     actually reaches the clean shelf (Step 7). Persisting eagerly meant a
+        #     job whose upsert later failed left its bands behind and was wrongly
+        #     dropped as a near-duplicate on the retry pass — permanent data loss
+        #     for a never-stored job. (F7) ---
+        near_bands: dict[str, tuple[str, str]] = {}  # rid -> (description, content_hash)
         kept: list[NormalizedJob] = []
         kept_ids: list[str] = []
         for job, rid in zip(survivors, survivor_ids):
@@ -231,10 +236,7 @@ class RefinePipeline:
             if near:
                 endstate[rid] = DUPLICATE
                 continue
-            try:
-                await asyncio.to_thread(self.minhash.add, desc, job.content_hash)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("refine_minhash_add_failed", extra={"id": rid, "error": str(exc)})
+            near_bands[rid] = (desc, job.content_hash)
             kept.append(job)
             kept_ids.append(rid)
         survivors, survivor_ids = kept, kept_ids
@@ -356,6 +358,21 @@ class RefinePipeline:
                     else:
                         summary["errors"] += 1
                         logger.warning("refine_upsert_row_failed", extra={"id": rid})
+
+        # --- Step 7b: persist near-dedup bands ONLY for rows that reached the
+        #     shelf. A row whose upsert failed stays 'new' and carries NO bands, so
+        #     the next pass re-evaluates it instead of dropping it as a phantom
+        #     near-dup. (F7) ---
+        for rid in final_ids:
+            if endstate.get(rid) != REFINED:
+                continue
+            desc, content_hash = near_bands.get(rid, ("", ""))
+            if not desc:
+                continue
+            try:
+                await asyncio.to_thread(self.minhash.add, desc, content_hash)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("refine_minhash_add_failed", extra={"id": rid, "error": str(exc)})
 
         # --- Commit terminal states. Any survivor still None means upsert failed;
         #     leave it 'new' (omit mark_status) so the next run retries it. ---

@@ -1,8 +1,6 @@
 import asyncio
 from unittest.mock import MagicMock
 
-import pytest
-
 from app.deduplication.dedup import DeduplicationService
 from app.models.job import NormalizedJob
 
@@ -133,17 +131,19 @@ def test_duplicate_indices_are_positions_in_original_list():
 # ---------------------------------------------------------------------------
 
 
-def test_batch_check_uses_default_jobs_table():
-    """By default _batch_check queries the 'jobs' table."""
+def test_batch_check_uses_active_shelf_by_default():
+    """With no pinned table, _batch_check resolves the active shelf from settings
+    (the read-switch) rather than a hardcoded default. (F4/F5)"""
+    from app.config import get_settings
+
     mock_client = MagicMock()
     mock_client.table.return_value.select.return_value.in_.return_value.execute.return_value.data = []
 
     service = DeduplicationService(mock_client)
     asyncio.run(service.filter_batch([_make_job("http://x.com/1")]))
 
-    # table() must have been called with "jobs"
     called_tables = [c.args[0] for c in mock_client.table.call_args_list]
-    assert "jobs" in called_tables
+    assert get_settings().jobs_table in called_tables
 
 
 def test_batch_check_uses_configured_table():
