@@ -173,6 +173,19 @@ class RefinePipeline:
         except Exception as exc:  # noqa: BLE001
             logger.warning("refine_dedup_purge_failed", extra={"error": str(exc)})
 
+        # Retention: drop terminal (refined/rejected/duplicate) raw_jobs past the
+        # window so the append-only inbox stays bounded. The C5 unique index stops
+        # re-scrape dupes; this clears aged *processed* rows. Best-effort, mirrors
+        # the dedup_memory purge above — a failure must not block the pass.
+        try:
+            res = await asyncio.to_thread(
+                lambda: self.supabase.rpc("purge_raw_jobs").execute()
+            )
+            if res.data:
+                logger.info("refine_raw_jobs_purged", extra={"deleted": res.data})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("refine_raw_jobs_purge_failed", extra={"error": str(exc)})
+
         rows = await self.raw_repo.fetch_new(limit=limit)
         summary = {
             "fetched": len(rows),

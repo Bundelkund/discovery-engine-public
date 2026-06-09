@@ -222,6 +222,21 @@ async def test_minhash_add_only_for_refined_rows(monkeypatch):
     assert summary["refined"] == 1
 
 
+# --- C5 retention: every run purges aged terminal raw_jobs from the inbox ---
+
+
+@pytest.mark.asyncio
+async def test_run_purges_raw_jobs_inbox(monkeypatch):
+    """Each run() calls the purge_raw_jobs() RPC so the append-only inbox stays
+    bounded (C5). Best-effort: wrapped so a purge failure never blocks the pass."""
+    p = _pipeline([_row("a")])
+    monkeypatch.setattr(
+        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
+    )
+    await p.run()
+    p.supabase.rpc.assert_any_call("purge_raw_jobs")
+
+
 # --- #5: a classify failure on one row rejects it and the pass continues ---
 
 
