@@ -114,7 +114,6 @@ class JobRepository(BaseRepository):
                     "source": job.source,
                     "external_id": job.external_id,
                     "content_hash": job.content_hash,
-                    "score_stage_1": job.score_stage_1,
                     "archetype": job.archetype,
                     "company_domain": job.company_domain,
                     "scraped_at": (

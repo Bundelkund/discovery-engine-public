@@ -16,9 +16,8 @@ Production cutover runbook (not executed here — offline reference):
      then apply via Supabase MCP / Dashboard.
   NEVER run --copy or --apply-drop against prod without verifying the gate first.
 """
-import os
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 from app.models.job import ScoredJob
 from app.repositories.jobs import JobRepository
@@ -40,7 +39,6 @@ def _scored_job(source: str = "adzuna", external_id: str = "az-1") -> ScoredJob:
         url=f"https://example.com/job/{external_id}",
         source=source,
         external_id=external_id,
-        score_stage_1=50,
     )
 
 

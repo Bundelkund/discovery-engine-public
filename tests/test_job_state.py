@@ -22,7 +22,6 @@ def _scored_job(source: str = "adzuna", external_id: str = "az-1") -> ScoredJob:
         url=f"https://example.com/job/{external_id}",
         source=source,
         external_id=external_id,
-        score_stage_1=50,
     )
 
 

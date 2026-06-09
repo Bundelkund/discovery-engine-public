@@ -308,8 +308,7 @@ class RefinePipeline:
                 logger.error("refine_resolution_failed", extra={"error": str(exc)})
 
         # 6c. Build final shelf rows — NO scoring (per-profile scoring is the tenant's
-        #     job). ScoredJob carries score_stage_1=0 (default) until the column is
-        #     dropped (Phase 2). Merge location + dq_flags only.
+        #     job). Merge location + dq_flags only.
         final_jobs: list[ScoredJob] = []
         final_ids: list[str] = []
         for job, rid in zip(survivors, survivor_ids):

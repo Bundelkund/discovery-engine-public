@@ -50,7 +50,6 @@ class ScoredJob(BaseModel):
     external_id: str = ""
     posted_at: Optional[datetime] = None
     content_hash: str = ""
-    score_stage_1: int = 0
     archetype: str = ""
     company_domain: str = ""
     # Bundle-B additive columns (migration bundle-b-additive.sql):

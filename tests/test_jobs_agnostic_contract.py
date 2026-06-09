@@ -30,7 +30,6 @@ def _make_job_row(**kwargs) -> dict:
         "source": "adzuna",
         "external_id": "ext-1",
         "content_hash": "abc123",
-        "score_stage_1": 80,
         "archetype": "consultant",
         "company_domain": "acme.de",
         "salary_min": 60000,
