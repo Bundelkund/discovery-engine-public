@@ -142,24 +142,26 @@ def load_data_quality_config() -> DataQualityConfig:
 
 @lru_cache
 def load_scoring_profile() -> "ScoringProfile | None":
-    """Load the single-user scoring profile.
+    """Load the engine scoring profile, if one is configured.
 
-    Resolution order (analogous to portals.yaml / portals.local.yaml):
-      1. config/scoring-profile.local.yaml  (user override, gitignored)
-      2. config/scoring-profile.yaml        (committed default)
-      3. None                               (no file at all)
+    The engine is profile-agnostic by default: no committed profile ships,
+    so this returns None in a stock deploy and RefinePipeline falls back to
+    an empty ScoringProfile (title-gate disabled -> keep all, score 0,
+    store_threshold 0 -> store everything). Per-profile scoring lives in the
+    tenant module (tenant.search_terms + tenant matching.py), not here.
 
-    Returns None only if neither file exists, so the orchestrator can
-    fall back to an empty profile. The Apply Skill's onboarding flow
-    is the canonical writer of the .local.yaml form. Cache invalidates
-    only on process restart; profiles change rarely and a restart is
-    cheap.
+    Resolution order (an opt-in escape hatch for a deploy that DOES want
+    engine-side scoring, analogous to portals.yaml / portals.local.yaml):
+      1. config/scoring-profile.local.yaml  (gitignored override)
+      2. config/scoring-profile.yaml        (committed — none ships by default)
+      3. None                               (agnostic default)
 
-    History: before DE-FOLLOWUP-11 fix (2026-05-31) only the
-    .local.yaml path was checked. Production Coolify deploys did not
-    have the file -> empty ScoringProfile -> jobs.archetype universally
-    empty. Committing the .yaml default unblocks single-tenant deploys
-    without taking away the .local override.
+    Cache invalidates only on process restart; profiles change rarely.
+
+    History: a committed scoring-profile.yaml (id "florian") used to ship to
+    populate jobs.archetype on the single-tenant Coolify deploy (DE-FOLLOWUP-11,
+    2026-05-31). Removed 2026-06-09 when the engine went profile-agnostic —
+    Florian's profile now lives only in the tenant module.
     """
     from app.scoring.types import ScoringProfile
 
