@@ -65,14 +65,8 @@ def _make_pipeline() -> RefinePipeline:
     p.location_normalizer = MagicMock()
     p.location_normalizer.normalize = MagicMock(return_value={})
 
-    # empty profile -> title_gate keeps all, scores 0
-    from app.scoring.types import ScoringProfile
-
-    p.profile = ScoringProfile(id="")
-
     # upsert returns a per-row success flag list (default: all rows succeed)
     p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True] * len(jobs))
-    p._enrich = AsyncMock()
 
     return p
 

@@ -261,17 +261,19 @@ def test_pagination_limit_max(client):
 # ---------------------------------------------------------------------------
 
 
-def test_sort_recency_vs_keyword(client):
-    """sort param is forwarded correctly for both values."""
+def test_sort_recency_forwarded(client):
+    """sort=recency is forwarded. (score_keyword removed — the engine is
+    profile-agnostic; per-profile relevance ranking is the consumer's job.)"""
     with _patch_query([]) as mock_q:
         resp = client.get("/jobs?sort=recency")
     assert resp.status_code == 200
     assert mock_q.call_args.kwargs["sort"] == "recency"
 
-    with _patch_query([]) as mock_q:
-        resp = client.get("/jobs?sort=score_keyword")
-    assert resp.status_code == 200
-    assert mock_q.call_args.kwargs["sort"] == "score_keyword"
+
+def test_sort_score_keyword_removed(client):
+    """The retired score_keyword sort value is now rejected (422)."""
+    resp = client.get("/jobs?sort=score_keyword")
+    assert resp.status_code == 422
 
 
 def test_sort_invalid_returns_422(client):
@@ -392,6 +394,7 @@ def test_job_list_item_fields(client):
     job = resp.json()["jobs"][0]
     assert "id" in job
     assert "title" in job
-    assert "score_stage_1" in job
-    assert "final_score" in job
+    # score_stage_1 + final_score removed (engine is profile-agnostic — no baked score).
+    assert "score_stage_1" not in job
+    assert "final_score" not in job
     assert "archetype" in job

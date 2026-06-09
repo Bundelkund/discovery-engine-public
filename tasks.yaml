@@ -410,6 +410,89 @@ tasks:
       einmalig 500 @ ~8.9s (kalter Cache), warmt sich -> match-loop laeuft periodisch warm.
       DANN tenant run_match_loop re-test -> matches_upserted > 0 erwartet, DANN tenant
       TM-CAL-01 threshold gegen gerankte Verteilung.
+
+  # --- Engine profil-agnostisch machen (Slice 2b der tenant-module-Entkopplung) ---
+  # Vorlauf done: commit 22296b5 hat config/scoring-profile.yaml + florian-goldset geloescht
+  # -> self.profile schon leer (no-op). Diese Tasks entfernen die STRUKTUR (toter gate/score-
+  # Pfad), nicht nur das Verhalten. Cross-repo-Uebersicht: florian-knowledge PLAN-decoupling.md.
+
+  - id: refine-decouple
+    title: refine_pipeline entkoppeln — gate + score + enrich raus, resolve bleibt
+    status: backlog
+    priority: P1
+    depends_on: []
+    detail: >
+      Step 6 (refine_pipeline.py:293-354) hatte 4 Teile: 6a title_gate(self.profile),
+      6b DescriptionResolver, 6c ScoringPipeline.run_stage1+filter_by_threshold, 6e _enrich.
+      6a+6c koppeln ein Personen-Profil in die GETEILTE jobs_v2-Shelf: profil-fremde Jobs
+      werden permanent 'rejected' (zweiter Tenant saehe sie nie), score_stage_1 wird in die
+      geteilte Tabelle gebacken. Verletzt "Sammeln->Aufraeumen->Ranken-separat" (jobs.py) —
+      Ranking laeuft schon per-Request via search_jobs_ranked (engine-recall-ranking), die
+      gebackene Bewertung ist redundant + multi-tenant falsch. 6e _enrich (Firmen-Metadaten)
+      = teuer pro Scrape + corpus-time unnoetig (User-Entscheid 2026-06-09) -> Apply on-demand
+      via existierender POST /enrich/{domain}. 6b resolve BLEIBT (Volltext via Redirect-URL,
+      corpus-essenziell fuer dedup-near + ranking, schon kostengedeckelt max_resolve/min_chars).
+      ACHTUNG Flut-Schutz: title_gate war NICHT nur Personen-Filter, sondern der ATS-Flut-Cap —
+      explizit als "T6 vor T5, sonst jobs-Flut bei 5915 Boards" gebaut (storage-gate, db-driven-
+      slugs ist DONE = Flut aktiv). Ersatzloses Loeschen + store_threshold:0 -> jobs_v2 wuchert.
+      -> profil-FREIEN Quality-Gate als Ersatz (leere/Muell-Titel raus; min-desc; ggf. per-source-cap).
+    acceptance: >
+      6a title_gate(profile) -> profil-freier quality_gate(job) ersetzt (kein ScoringProfile-Input);
+      6c ScoringPipeline+filter_by_threshold aus refine raus (kein score_stage_1 berechnet);
+      6e _enrich-Aufruf+Methode+Wiring raus (EnrichmentPipeline/CompanyRepository/POST /enrich BLEIBEN);
+      6b DescriptionResolver unveraendert; self.profile + load_scoring_profile-Import raus;
+      jobs.py upsert setzt score_stage_1 nicht mehr (transitional null bis score-column-drop);
+      neue Tests: profil-fremder Job -> REFINED statt rejected, Flut-Gate (Muell-Titel raus, valide bleibt);
+      profil-basierte reject/score/enrich-Assertions in test_refine_pipeline ersetzt; ruff clean; volle Suite gruen.
+    note: >
+      Verify-Punkt erledigt 2026-06-09: Tenant + auto-apply lesen KEINE pre-enrichte companies
+      (nur company-String) -> enrich-removal lazy-fill safe.
+
+  - id: jobs-api-score-removal
+    title: Read-Pfad — score_keyword-Sort + score_stage_1 aus /jobs-API entfernen
+    status: backlog
+    priority: P1
+    depends_on: [refine-decouple]
+    detail: >
+      jobs_api.py:113 erlaubt sort=score_keyword (score_stage_1 DESC); responses.py:39,79 tragen
+      score_stage_1. Nach refine-decouple ist score_stage_1 immer null -> Sort sinnlos, Feld
+      irrefuehrend. Tenant nutzt keywords_positive -> search_jobs_ranked RPC (NICHT sort=score_keyword)
+      -> kein Bruch.
+    acceptance: >
+      sort-Enum auf ^(recency)$ (score_keyword raus), Default recency; score_stage_1 aus responses.py
+      (Z.39,79) raus; Verify grep consumer (tenant/wonderapply/auto-apply) auf sort=score_keyword -> keiner, zitiert.
+
+  - id: score-column-drop
+    title: Schema — jobs_v2.score_stage_1 Spalte droppen
+    status: backlog
+    priority: P2
+    depends_on: [refine-decouple, jobs-api-score-removal]
+    detail: >
+      Nachdem Code die Spalte nicht mehr schreibt/liest: droppen statt nullable lassen (no-dead-code).
+      models/job.py ScoredJob.score_stage_1 raus (ggf. ScoredJob -> NormalizedJob kollabieren,
+      Deletion-Test). DDL durch Florian (Default: er appliziert Migrationen, ausser explizite Delegation).
+    acceptance: >
+      PREREQ-Verify (kritisch): wonderapply echten SELECT auf jobs_v2 pruefen — select * (safe) vs
+      benannt score_stage_1 (braeche), vor DDL zitiert; Migration ALTER TABLE jobs_v2 DROP COLUMN
+      IF EXISTS score_stage_1 (idempotent); models/job.py score_stage_1 raus; touched Tests gruen;
+      DDL appliziert durch Florian.
+
+  - id: scoring-code-deletion
+    title: Toten Scoring-Code hart loeschen (Phase-5 Cleanup)
+    status: backlog
+    priority: P2
+    depends_on: [refine-decouple, jobs-api-score-removal]
+    detail: >
+      Scoring-Logik ist im Tenant gespiegelt (tenant-module app/matching.py = Port) -> kein
+      Capability-Verlust. Hart loeschen statt dormant (no-dead-code). HINWEIS: config/scoring-profile.yaml
+      + goldset (test_scoring_goldset.py, scoring_goldset.csv, scoring_goldset_runs/, compare_scoring_runs.py)
+      SIND SCHON WEG (commit 22296b5) — nicht relisten. BLEIBT (NICHT loeschen): EnrichmentPipeline,
+      CompanyRepository, companies-Tabelle, POST /enrich/{domain}, DescriptionResolver.
+    acceptance: >
+      Geloescht: app/scoring/pipeline.py, storage_gate.py, keyword-Scorer, scorer_registry,
+      config/scoring.yaml, config/archetypes.yaml; load_scoring_* aus config.py raus; Scoring-Teile aus
+      scripts/chaos_guard_smoke.py raus; Enrichment/Companies/enrich-Route/DescriptionResolver NICHT geloescht;
+      Verify graphify <engine> --update -> keine orphan/ghost-Nodes, Import-Graph sauber; volle Suite gruen.
     acceptance: "GET /jobs keyword-Suche ORDER BY ts_rank DESC; florians Top-Treffer = Agile-Coach/DE-Rollen (verifiziert); Phrase-Quoting honoriert (E2); tenant matches_upserted > 0 nach Deploy."
     reconcile_note: >
       Branch-Divergenz: diese tasks.yaml ist die main-Linie (5ac2bb8+3b4e306). Der

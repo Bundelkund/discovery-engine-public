@@ -1,9 +1,13 @@
-"""Refine pipeline: ordered steps, score/gate preservation, upsert shape, profile-id absence."""
+"""Refine pipeline: ordered steps, profile-agnostic shelf, upsert shape.
+
+The engine is profile-agnostic — Step 6 has NO scoring and NO enrichment. A job
+that survives parse/dedup/dq/quality-gate is refined and upserted to the shared
+shelf regardless of any user's profile (per-profile scoring lives in the tenant).
+"""
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from app.models.job import ScoredJob
-from app.scoring.types import ScoringProfile
 from app.services.refine_pipeline import RefinePipeline, parse_raw
 
 
@@ -26,36 +30,6 @@ def _row(rid: str, **over) -> dict:
     return base
 
 
-def _fake_scoring_pipeline(score_map=None, threshold_keep=None):
-    """Build a fake ScoringPipeline class for monkeypatching the module symbol.
-
-    score_map: title -> score (default 50). threshold_keep: predicate(ScoredJob)
-    deciding which scored jobs survive filter_by_threshold (default: keep all).
-    """
-    score_map = score_map or {}
-
-    class _Fake:
-        captured_titles: list = []
-
-        def __init__(self, cfg):
-            pass
-
-        async def run_stage1(self, jobs, profile):
-            type(self).captured_titles = [j.title for j in jobs]
-            return [
-                ScoredJob(**j.model_dump(), score_stage_1=score_map.get(j.title, 50),
-                          archetype="coach")
-                for j in jobs
-            ]
-
-        def filter_by_threshold(self, jobs):
-            pred = threshold_keep or (lambda j: True)
-            kept = [j for j in jobs if pred(j)]
-            return kept, len(jobs) - len(kept)
-
-    return _Fake
-
-
 def _pipeline(rows: list[dict]) -> RefinePipeline:
     p = RefinePipeline(MagicMock())
     p.raw_repo.fetch_new = AsyncMock(return_value=rows)
@@ -63,16 +37,15 @@ def _pipeline(rows: list[dict]) -> RefinePipeline:
     p.dedup.filter_batch = AsyncMock(side_effect=lambda jobs: (list(jobs), 0, set()))
     p.minhash.is_near_duplicate = MagicMock(return_value=False)
     p.minhash.add = MagicMock()
+    p.minhash.purge_old = MagicMock(return_value=0)
     p.rules_engine = MagicMock(mode="flag-only")
     p.rules_engine.classify = MagicMock(return_value=("keep", {}))
     p.location_normalizer = MagicMock()
     p.location_normalizer.normalize = MagicMock(
         return_value={"location_normalized": "Berlin", "is_remote": False}
     )
-    p.profile = ScoringProfile(id="")
-    # upsert now returns a per-row success flag list (default: all rows succeed).
+    # upsert returns a per-row success flag list (default: all rows succeed).
     p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True] * len(jobs))
-    p._enrich = AsyncMock()
     return p
 
 
@@ -93,72 +66,42 @@ def test_parse_raw_backfills_default_source():
     assert nj.source == "indeed"
 
 
-# --- ordered: dedup runs before scoring (a dup never reaches the scorer) ---
+# --- agnostic: a job that matched no old profile signal is now REFINED ---
 
 
 @pytest.mark.asyncio
-async def test_exact_dup_skips_scoring(monkeypatch):
-    p = _pipeline([_row("a"), _row("b")])
-    p.dedup.filter_batch = AsyncMock(return_value=([], 1, {0}))  # 'a' is a dup
-
-    fake = _fake_scoring_pipeline()
-    monkeypatch.setattr("app.services.refine_pipeline.ScoringPipeline", fake)
-
-    await p.run()
-    # Only the non-dup survivor 'b' was scored.
-    assert len(fake.captured_titles) == 1
-
-
-# --- title gate drops no-signal titles when a profile is configured ---
-
-
-@pytest.mark.asyncio
-async def test_title_gate_drops_non_matching_when_profile_set(monkeypatch):
-    p = _pipeline([_row("a", title="Plumber"), _row("b", title="Agile Coach")])
-    p.profile = ScoringProfile(id="x", keywords_positive=["coach"])
-
-    monkeypatch.setattr(
-        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
-    )
-
+async def test_profile_foreign_job_is_refined():
+    """The engine no longer gates on a person's profile. A title that the old
+    florian profile would have rejected ('Software Engineer') is now refined and
+    upserted — the shared shelf is user-agnostic."""
+    p = _pipeline([_row("a", title="Software Engineer")])
     summary = await p.run()
     marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
-    assert marked["a"] == "rejected"  # Plumber gated out
+    assert marked["a"] == "refined"
+    assert summary["refined"] == 1
+
+
+# --- quality_gate: an empty/garbage title is rejected (profile-free flood cap) ---
+
+
+@pytest.mark.asyncio
+async def test_garbage_title_rejected_by_quality_gate():
+    p = _pipeline([_row("a", title="  "), _row("b", title="Data Engineer")])
+    summary = await p.run()
+    marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
+    assert marked["a"] == "rejected"   # blank title -> quality gate drop
     assert marked["b"] == "refined"
     assert summary["rejected"] == 1
+    assert summary["refined"] == 1
 
 
-# --- below-threshold scored jobs are rejected, not upserted ---
-
-
-@pytest.mark.asyncio
-async def test_below_threshold_rejected(monkeypatch):
-    p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
-    # 'Coach A' scores 0 (below threshold), 'Coach B' scores 100 (kept)
-    fake = _fake_scoring_pipeline(
-        score_map={"Coach A": 0, "Coach B": 100},
-        threshold_keep=lambda j: j.score_stage_1 >= 50,
-    )
-    monkeypatch.setattr("app.services.refine_pipeline.ScoringPipeline", fake)
-
-    await p.run()
-    marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
-    assert marked["a"] == "rejected"
-    assert marked["b"] == "refined"
-
-
-# --- final ScoredJob carries location + dq_flags into the upsert ---
+# --- ordered: an exact dup never reaches the shelf ---
 
 
 @pytest.mark.asyncio
-async def test_upsert_receives_location_and_flags(monkeypatch):
-    p = _pipeline([_row("a")])
-    p.rules_engine.classify = MagicMock(return_value=("keep", {"junior_title": True}))
-
-    monkeypatch.setattr(
-        "app.services.refine_pipeline.ScoringPipeline",
-        _fake_scoring_pipeline(score_map={"Agile Coach": 80}),
-    )
+async def test_exact_dup_not_upserted():
+    p = _pipeline([_row("a"), _row("b")])
+    p.dedup.filter_batch = AsyncMock(return_value=([], 1, {0}))  # 'a' is a dup
 
     captured = {}
 
@@ -167,26 +110,41 @@ async def test_upsert_receives_location_and_flags(monkeypatch):
         return [True] * len(jobs)
 
     p.job_repo.upsert = capture_upsert
+    await p.run()
+    # Only the non-dup survivor reached the shelf.
+    assert len(captured["jobs"]) == 1
 
+
+# --- final ScoredJob carries location + dq_flags into the upsert (no score) ---
+
+
+@pytest.mark.asyncio
+async def test_upsert_receives_location_and_flags():
+    p = _pipeline([_row("a")])
+    p.rules_engine.classify = MagicMock(return_value=("keep", {"junior_title": True}))
+
+    captured = {}
+
+    async def capture_upsert(jobs):
+        captured["jobs"] = jobs
+        return [True] * len(jobs)
+
+    p.job_repo.upsert = capture_upsert
     await p.run()
     job = captured["jobs"][0]
+    assert isinstance(job, ScoredJob)
     assert job.location_normalized == "Berlin"
     assert job.dq_flags == {"junior_title": True}
-    assert job.score_stage_1 == 80
 
 
 # --- #4: a per-row upsert failure must NOT mark that raw_job 'refined' ---
 
 
 @pytest.mark.asyncio
-async def test_upsert_partial_failure_leaves_failed_row_new(monkeypatch):
+async def test_upsert_partial_failure_leaves_failed_row_new():
     """When upsert reports row 'b' failed, only 'a' is marked refined; 'b' stays
     'new' (no mark_status) so the next pass retries it — never silently refined."""
     p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
-    monkeypatch.setattr(
-        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
-    )
-    # First job reaches the shelf, second fails inside the repo.
     p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True, False])
 
     summary = await p.run()
@@ -201,24 +159,15 @@ async def test_upsert_partial_failure_leaves_failed_row_new(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_minhash_add_only_for_refined_rows(monkeypatch):
+async def test_minhash_add_only_for_refined_rows():
     """F7 regression: minhash.add() must run ONLY for rows that reached the shelf.
-
-    Old code add()'d every Step-3 survivor eagerly. A row whose upsert later failed
-    then left its band hashes in dedup_memory, so the retry pass dropped it as a
-    phantom near-duplicate — permanent loss of a job that was never stored. With the
-    fix, the failed row 'b' gets no add(), so it is re-evaluated cleanly next pass."""
+    A row whose upsert later failed must NOT leave its band hashes behind."""
     p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
-    monkeypatch.setattr(
-        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
-    )
-    # 'a' lands on the shelf, 'b' fails inside the repo.
     p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True, False])
 
     summary = await p.run()
 
-    # Exactly one persist — for the refined row only. (Old code: 2 eager adds.)
-    assert p.minhash.add.call_count == 1
+    assert p.minhash.add.call_count == 1  # only the refined row
     assert summary["refined"] == 1
 
 
@@ -226,13 +175,10 @@ async def test_minhash_add_only_for_refined_rows(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_purges_raw_jobs_inbox(monkeypatch):
+async def test_run_purges_raw_jobs_inbox():
     """Each run() calls the purge_raw_jobs() RPC so the append-only inbox stays
     bounded (C5). Best-effort: wrapped so a purge failure never blocks the pass."""
     p = _pipeline([_row("a")])
-    monkeypatch.setattr(
-        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
-    )
     await p.run()
     p.supabase.rpc.assert_any_call("purge_raw_jobs")
 
@@ -241,13 +187,10 @@ async def test_run_purges_raw_jobs_inbox(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_classify_failure_isolated_per_row(monkeypatch):
+async def test_classify_failure_isolated_per_row():
     """A rules-engine exception on one row marks it 'rejected' and does not abort
     the batch — the sibling row still refines."""
     p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
-    monkeypatch.setattr(
-        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
-    )
 
     def _classify(job_dict):
         if job_dict.get("title") == "Coach A":
@@ -261,76 +204,3 @@ async def test_classify_failure_isolated_per_row(monkeypatch):
     assert marked["a"] == "rejected"
     assert marked["b"] == "refined"
     assert summary["errors"] >= 1
-
-
-# --- enrichment is invoked for survivors (preserved from old orchestrator) ---
-
-
-@pytest.mark.asyncio
-async def test_enrichment_invoked(monkeypatch):
-    p = _pipeline([_row("a")])
-    monkeypatch.setattr(
-        "app.services.refine_pipeline.ScoringPipeline", _fake_scoring_pipeline()
-    )
-
-    await p.run()
-    p._enrich.assert_awaited_once()
-
-
-# --- agnostik: EnrichmentContext built without profile_id ---
-
-
-@pytest.mark.asyncio
-async def test_enrich_context_has_no_profile_id(monkeypatch):
-    """The real _enrich must construct EnrichmentContext with no profile_id field
-    (agnostik) — the model no longer carries one."""
-    from app.models.company import EnrichmentContext
-
-    assert not hasattr(EnrichmentContext(), "profile_id")
-
-    p = RefinePipeline(MagicMock())
-    p.company_repo.needs_enrichment = AsyncMock(return_value=True)
-    p.company_repo.upsert = AsyncMock()
-
-    captured = {}
-
-    class FakePipeline:
-        def __init__(self, cfg):
-            pass
-
-        async def run(self, companies, ctx):
-            captured["ctx"] = ctx
-            return companies
-
-    monkeypatch.setattr("app.services.refine_pipeline.EnrichmentPipeline", FakePipeline)
-
-    job = ScoredJob(
-        title="T", url="https://acme.io/x", company="ACME",
-        source="lever", external_id="1", score_stage_1=50,
-    )
-    await p._enrich([job])
-
-    # ctx was built and carries no profile_id attribute
-    assert "ctx" in captured
-    assert not hasattr(captured["ctx"], "profile_id")
-
-
-# --- _extract_domain behaviour ---
-
-
-def test_extract_domain_greenhouse():
-    p = RefinePipeline.__new__(RefinePipeline)
-    job = ScoredJob(
-        title="T", url="https://boards.greenhouse.io/acme/jobs/9",
-        company="ACME", source="greenhouse", external_id="9",
-    )
-    assert p._extract_domain(job) == "acme.com"
-
-
-def test_extract_domain_skips_aggregators():
-    p = RefinePipeline.__new__(RefinePipeline)
-    job = ScoredJob(
-        title="T", url="https://indeed.com/job/9", company="X",
-        source="indeed", external_id="9",
-    )
-    assert p._extract_domain(job) == ""

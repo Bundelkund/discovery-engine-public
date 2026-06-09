@@ -32,7 +32,6 @@ def _row_to_list_item(row: dict) -> JobListItem:
     if isinstance(keywords, str):
         keywords = [k.strip() for k in keywords.split(",") if k.strip()]
 
-    score_stage_1 = row.get("score_stage_1") or 0
     return JobListItem(
         id=row.get("id", ""),
         title=row.get("title", ""),
@@ -47,8 +46,6 @@ def _row_to_list_item(row: dict) -> JobListItem:
         posted_at=row.get("posted_at") or row.get("scraped_at"),
         scraped_at=row.get("scraped_at"),
         company_domain=row.get("company_domain", ""),
-        final_score=float(score_stage_1),
-        score_stage_1=score_stage_1,
         archetype=row.get("archetype", ""),
     )
 
@@ -58,7 +55,6 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
     if isinstance(keywords, str):
         keywords = [k.strip() for k in keywords.split(",") if k.strip()]
 
-    score_stage_1 = row.get("score_stage_1") or 0
     return JobDetailResponse(
         id=row.get("id", ""),
         title=row.get("title", ""),
@@ -77,8 +73,6 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
         content_hash=row.get("content_hash", ""),
         company_domain=row.get("company_domain", ""),
         metadata=row.get("metadata") or {},
-        final_score=float(score_stage_1),
-        score_stage_1=score_stage_1,
         archetype=row.get("archetype", ""),
     )
 
@@ -110,8 +104,9 @@ async def list_jobs(
     ),
     sort: str = Query(
         "recency",
-        pattern="^(recency|score_keyword)$",
-        description="Sort order: recency (scraped_at DESC) or score_keyword (score_stage_1 DESC, NULL-last)",
+        pattern="^(recency)$",
+        description="Sort order: recency (scraped_at DESC). Per-profile relevance ranking "
+        "is the consumer's job (e.g. keywords_positive -> server-side ts_rank).",
     ),
     limit: int = Query(50, ge=1, le=500, description="Max rows returned (default 50, max 500)"),
     offset: int = Query(0, ge=0, description="Pagination offset"),

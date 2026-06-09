@@ -368,13 +368,9 @@ class JobRepository(BaseRepository):
                     .lte("location_lon", lon0 + delta_lon)
                 )
 
-        # -- Sort --
-        if sort == "score_keyword":
-            # NULL-last for score_stage_1
-            q = q.order("score_stage_1", desc=True, nulls_first=False)
-        else:
-            # default: recency
-            q = q.order("scraped_at", desc=True)
+        # -- Sort -- recency only; per-profile relevance ranking is the consumer's
+        # job (keywords_positive routes to the search_jobs_ranked ts_rank RPC).
+        q = q.order("scraped_at", desc=True)
 
         # -- Pagination --
         q = q.limit(limit).offset(offset)

@@ -35,8 +35,6 @@ class JobListItem(BaseModel):
     posted_at: Optional[datetime] = None
     scraped_at: Optional[datetime] = None
     company_domain: Optional[str] = None
-    final_score: float = 0.0
-    score_stage_1: int = 0
     archetype: Optional[str] = ""
 
 
@@ -75,8 +73,6 @@ class JobDetailResponse(BaseModel):
     content_hash: Optional[str] = ""
     company_domain: Optional[str] = ""
     metadata: Optional[dict] = Field(default_factory=dict)
-    final_score: float = 0.0
-    score_stage_1: int = 0
     archetype: Optional[str] = ""
 
 

@@ -15,7 +15,9 @@ Ordered steps (each independently testable, fixed order):
   3. dedup (near)       MinHashDedup.is_near_duplicate(description) per survivor
   4. dq-rules           RulesEngine.classify -> reject (when mode=='flag+reject') / flags
   5. location           LocationNormalizer.normalize -> location_normalized/lat/lon/remote
-  6. score+gate+enrich  title_gate -> ScoringPipeline.run_stage1 -> resolve -> enrich
+  6. gate+resolve       quality_gate (profile-free) -> DescriptionResolver backfill
+                        (NO scoring, NO enrich — engine is profile-agnostic; per-profile
+                        scoring lives in the tenant module, enrichment is on-read)
   7. state-upsert        survivors -> ScoredJob -> JobRepository.upsert; mark 'refined'
 
 Idempotency: the input is read via ``RawJobRepository.fetch_new`` (status='new'
@@ -32,28 +34,19 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from urllib.parse import urlparse
 
 from app.config import (
     load_data_quality_config,
-    load_enrichment_config,
     load_resolution_config,
-    load_scoring_config,
-    load_scoring_profile,
 )
 from app.data_quality.context import get_dq_context
 from app.data_quality.minhash import MinHashDedup
 from app.deduplication.dedup import DeduplicationService
-from app.enrichment.pipeline import EnrichmentPipeline
-from app.models.company import CompanyProfile, EnrichmentContext
 from app.models.job import NormalizedJob, RawJob, ScoredJob
-from app.repositories.companies import CompanyRepository
+from app.data_quality.quality_gate import quality_gate
 from app.repositories.jobs import JobRepository
 from app.repositories.raw_jobs import RawJobRepository
 from app.resolution.description_resolver import DescriptionResolver
-from app.scoring.pipeline import ScoringPipeline
-from app.scoring.storage_gate import title_gate
-from app.scoring.types import ScoringProfile
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +124,6 @@ class RefinePipeline:
         self.supabase = supabase_client
         self.raw_repo = RawJobRepository(supabase_client)
         self.job_repo = JobRepository(supabase_client)
-        self.company_repo = CompanyRepository(supabase_client)
 
         # Dedup against the active shelf. No snapshot — DeduplicationService now
         # resolves jobs_table from settings per call, so it can never diverge from
@@ -153,9 +145,6 @@ class RefinePipeline:
         dq = get_dq_context()
         self.location_normalizer = dq.location_normalizer
         self.rules_engine = dq.rules_engine
-
-        # Single-user profile (optional) — empty profile keeps all titles / scores 0.
-        self.profile = load_scoring_profile() or ScoringProfile(id="")
 
     async def run(self, limit: int = 100) -> dict:
         """Process one batch of status='new' raw_jobs into terminal states.
@@ -290,23 +279,24 @@ class RefinePipeline:
                 loc = {}
             loc_fields[rid] = loc
 
-        # --- Step 6: score + gate + enrich (preserved from the old orchestrator). ---
-        # 6a. title_gate — drop titles with no profile signal; priority -> dq_flags.
+        # --- Step 6: gate + resolve (profile-agnostic; no scoring, no enrich). ---
+        # 6a. quality_gate — profile-FREE: drop empty/garbage titles only. Replaces the
+        #     old profile-coupled title_gate (which would permanently reject jobs that
+        #     did not match Florian's profile — wrong for a shared multi-tenant shelf).
+        #     This keeps the ATS-flood cap that title_gate also served (db-driven-slugs).
         gated: list[NormalizedJob] = []
         gated_ids: list[str] = []
         for job, rid in zip(survivors, survivor_ids):
-            keep, priority = title_gate(job.title, self.profile)
-            if not keep:
+            if not quality_gate(job.title):
                 endstate[rid] = REJECTED
-                logger.info("refine_title_gated", extra={"id": rid, "title": job.title[:80]})
+                logger.info("refine_quality_gated", extra={"id": rid, "title": job.title[:80]})
                 continue
-            if priority:
-                job_flags.setdefault(rid, {})["priority"] = True
             gated.append(job)
             gated_ids.append(rid)
         survivors, survivor_ids = gated, gated_ids
 
-        # 6b. DescriptionResolver — best-effort thin-description backfill (before scoring).
+        # 6b. DescriptionResolver — best-effort thin-description backfill (corpus value:
+        #     full text via the posting's redirect URL feeds dedup-near + /jobs ranking).
         if survivors:
             try:
                 res_cfg = load_resolution_config().get("resolution", {})
@@ -317,41 +307,22 @@ class RefinePipeline:
             except Exception as exc:  # noqa: BLE001
                 logger.error("refine_resolution_failed", extra={"error": str(exc)})
 
-        # 6c. Stage-1 scoring + threshold filter.
-        scored_by_id: dict[str, ScoredJob] = {}
-        if survivors:
-            scoring_cfg = load_scoring_config().get("scoring", {})
-            pipeline = ScoringPipeline(scoring_cfg)
-            scored = await pipeline.run_stage1(survivors, self.profile)
-            kept_scored, _below = pipeline.filter_by_threshold(scored)
-            kept_set = {id(j) for j in kept_scored}
-            # Map back to raw_job ids by positional alignment (run_stage1 preserves order).
-            below_ids: list[str] = []
-            for sj, rid in zip(scored, survivor_ids):
-                if id(sj) in kept_set:
-                    scored_by_id[rid] = sj
-                else:
-                    below_ids.append(rid)
-            for rid in below_ids:
-                endstate[rid] = REJECTED
-            survivor_ids = [rid for rid in survivor_ids if rid in scored_by_id]
-
-        # 6d. Build final ScoredJobs (merge location + dq_flags) for the upsert.
+        # 6c. Build final shelf rows — NO scoring (per-profile scoring is the tenant's
+        #     job). ScoredJob carries score_stage_1=0 (default) until the column is
+        #     dropped (Phase 2). Merge location + dq_flags only.
         final_jobs: list[ScoredJob] = []
         final_ids: list[str] = []
-        for rid in survivor_ids:
-            sj = scored_by_id[rid]
+        for job, rid in zip(survivors, survivor_ids):
             update = dict(loc_fields.get(rid, {}))
             update["dq_flags"] = job_flags.get(rid, {})
             try:
-                sj = sj.model_copy(update=update)
+                sj = ScoredJob(**job.model_dump()).model_copy(update=update)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("refine_merge_failed", extra={"id": rid, "error": str(exc)})
+                # Leave rid unmarked (stays 'new') so the next pass retries it.
+                logger.warning("refine_build_failed", extra={"id": rid, "error": str(exc)})
+                continue
             final_jobs.append(sj)
             final_ids.append(rid)
-
-        # 6e. Enrich new company domains (best-effort, no profile_id).
-        await self._enrich(final_jobs)
 
         # --- Step 7: state-upsert. Survivors -> clean shelf; mark 'refined'. ---
         if final_jobs:
@@ -413,57 +384,3 @@ class RefinePipeline:
                 out_jobs.append(job)
                 out_ids.append(rid)
         return out_jobs, out_ids
-
-    async def _enrich(self, jobs: list[ScoredJob]) -> None:
-        """Enrich newly-seen company domains. Best-effort; failures are swallowed.
-
-        No profile_id in EnrichmentContext (agnostik). Mirrors the old orchestrator
-        step 7: collect unique domains, enrich those needing it, upsert results.
-        """
-        if not jobs:
-            return
-        try:
-            domains: set[str] = set()
-            to_enrich: list[CompanyProfile] = []
-            for job in jobs:
-                domain = self._extract_domain(job)
-                if domain and domain not in domains:
-                    domains.add(domain)
-                    if await self.company_repo.needs_enrichment(domain):
-                        to_enrich.append(CompanyProfile(domain=domain, name=job.company))
-
-            if not to_enrich:
-                return
-
-            enrichment_cfg = load_enrichment_config().get("enrichment", {})
-            enrich_pipeline = EnrichmentPipeline(enrichment_cfg)
-            ctx = EnrichmentContext(jobs=[j.model_dump() for j in jobs])
-            enriched = await enrich_pipeline.run(to_enrich, ctx)
-            for company in enriched:
-                await self.company_repo.upsert(company)
-            logger.info("refine_enriched", extra={"companies": len(enriched)})
-        except Exception as exc:  # noqa: BLE001
-            logger.error("refine_enrichment_failed", extra={"error": str(exc)})
-
-    @staticmethod
-    def _extract_domain(job: ScoredJob) -> str:
-        """Best-effort company domain from an explicit field or the posting URL."""
-        domain = getattr(job, "company_domain", "") or ""
-        if domain:
-            return domain
-        url = getattr(job, "url", "") or ""
-        if not url:
-            return ""
-        try:
-            host = urlparse(url).hostname or ""
-            if "greenhouse.io" in host:
-                parts = (
-                    url.split("/boards/") if "/boards/" in url else url.split("greenhouse.io/")
-                )
-                if len(parts) > 1:
-                    return parts[1].split("/")[0] + ".com"
-            elif host and "indeed" not in host and "adzuna" not in host:
-                return host.replace("www.", "")
-        except Exception:  # noqa: BLE001
-            pass
-        return ""
