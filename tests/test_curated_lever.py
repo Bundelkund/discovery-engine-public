@@ -60,3 +60,33 @@ def test_row_from_active_sets_monitor_and_status():
     assert r["status"] == "active"
     assert r["monitor"] is True
     assert r["last_job_count"] == 4
+
+
+# --- _build_rows no-validate guard (Stage A discover must not wipe state) -----
+_NOVAL = {"slug": "acme", "active": None, "job_count": 0, "de_flag": None,
+          "error": "not validated"}
+
+
+def test_no_validate_skips_existing_rows():
+    # validated=False + slug already present -> NO update emitted (state protected)
+    new, upd = seed_ats_companies._build_rows(
+        "personio", [_NOVAL], have={"acme"}, crawls=[], source="cc", validated=False)
+    assert new == [] and upd == []
+
+
+def test_no_validate_inserts_new_slug_without_validated_fields():
+    # new slug under no-validate -> identity/meta only, NO de_flag/status/monitor stub
+    new, upd = seed_ats_companies._build_rows(
+        "personio", [_NOVAL], have=set(), crawls=[], source="cc", validated=False)
+    assert upd == [] and len(new) == 1
+    row = new[0]
+    assert row["source"] == "personio" and row["slug"] == "acme"
+    for forbidden in ("de_flag", "status", "monitor"):
+        assert forbidden not in row  # schema defaults apply, no dead/null wipe
+
+
+def test_validated_updates_existing_normally():
+    new, upd = seed_ats_companies._build_rows(
+        "lever", [_V], have={"qonto"}, crawls=[], source="cc", validated=True)
+    assert new == [] and len(upd) == 1
+    assert upd[0]["de_flag"] == "de" and upd[0]["status"] == "active"

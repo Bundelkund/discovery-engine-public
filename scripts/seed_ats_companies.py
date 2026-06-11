@@ -108,27 +108,52 @@ def upsert(client: httpx.Client, base: str, hdr: dict, rows: list[dict]) -> None
         print(f"  upserted {min(i + CHUNK, len(rows))}/{len(rows)}")
 
 
+def _build_rows(ats: str, vals: list[dict], have: set[str], crawls: list[str],
+                source: str, validated: bool) -> tuple[list[dict], list[dict]]:
+    """Split validations into (new_rows, upd_rows) for upsert.
+
+    validated=False (Stage A `--no-validate`): a no-validate stub carries de_flag=null +
+    active=None -> status_of()='dead', so merging it onto an EXISTING row would wipe the
+    real de_flag/status/monitor. Guard: never emit upd_rows for unvalidated runs; only
+    register genuinely-new slugs with identity + discovery metadata, letting status/de_flag/
+    monitor fall to schema defaults until a real validate pass classifies them.
+    """
+    new_rows, upd_rows = [], []
+    for v in vals:
+        slug = v.get("slug")
+        if not slug:
+            continue
+        if not validated:
+            if slug in have:
+                continue  # protect validated state — discover never overwrites
+            new_rows.append({"source": ats, "slug": slug, "origin": source,
+                             "seen_in_crawls": crawls,
+                             "initial_job_count": v.get("job_count") or 0,
+                             "last_checked_at": NOW_ISO})
+            continue
+        r = row_from(ats, v, crawls, source)
+        if slug in have:
+            upd_rows.append(r)  # preserve initial_job_count + discovered_at -> omit them
+        else:
+            r["initial_job_count"] = v.get("job_count") or 0
+            new_rows.append(r)
+    return new_rows, upd_rows
+
+
 def seed_ats(client, base, hdr, path: Path) -> tuple[int, int]:
     d = json.loads(path.read_text(encoding="utf-8"))
     ats = d["ats"]
     crawls = d.get("crawls") or []
     source = d.get("source") or "cc"  # curated lists tag source; CC JSONs omit it
+    validated = bool(d.get("validated", True))  # absent -> assume validated (curated/legacy)
     vals = d.get("all_validations") or []
     if not vals:
         print(f"{ats}: no all_validations, skip")
         return 0, 0
     have = existing_keys(client, base, hdr, ats)
-    new_rows, upd_rows = [], []
-    for v in vals:
-        if not v.get("slug"):
-            continue
-        r = row_from(ats, v, crawls, source)
-        if v["slug"] in have:
-            upd_rows.append(r)  # preserve initial_job_count + discovered_at -> omit them
-        else:
-            r["initial_job_count"] = v.get("job_count") or 0
-            new_rows.append(r)
-    print(f"{ats}: {len(vals)} slugs -> {len(new_rows)} new + {len(upd_rows)} update")
+    new_rows, upd_rows = _build_rows(ats, vals, have, crawls, source, validated)
+    tag = "" if validated else " [no-validate: existing rows protected]"
+    print(f"{ats}: {len(vals)} slugs -> {len(new_rows)} new + {len(upd_rows)} update{tag}")
     if new_rows:
         upsert(client, base, hdr, new_rows)
     if upd_rows:

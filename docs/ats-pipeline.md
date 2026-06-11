@@ -20,6 +20,8 @@ cadences, never deletes. Single fetch per board yields active + job_count + titl
 
 Neither stage deletes. A only inserts new slugs; B flips `active`/sets `status='dead'` but keeps the row + its `seen_in_crawls` history. Registry only grows.
 
+**Enforced by the seed no-validate guard** (`seed_ats_companies._build_rows`): a `--no-validate` report (Stage A) carries `de_flag=null` + `active=None` (→ `status='dead'`), so merging it onto existing rows would WIPE validated state. The guard emits **zero updates** for unvalidated runs — only genuinely-new slugs are inserted (status/de_flag/monitor fall to schema defaults until a real Stage B validate pass). Without it, activating the monthly discover cron would nuke the whole registry's de_flag/status.
+
 ## How it is triggered
 
 **Live (T8):** n8n cron → HTTP → discovery-engine endpoint `POST /scan/{stage}`
