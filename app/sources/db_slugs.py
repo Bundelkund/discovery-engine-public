@@ -21,6 +21,7 @@ def load_active_slugs(ats: str) -> list[str]:
 
         SELECT slug FROM ats_companies
         WHERE ats = :ats AND status = 'active' AND monitor = true
+          AND de_flag IN ('de','remote')
 
     Returns ``[]`` on any failure so the caller falls back to its
     portals.yaml slugs (Tabelle = SoT, yaml = Fallback).
@@ -40,6 +41,7 @@ def load_active_slugs(ats: str) -> list[str]:
             .eq("ats", ats)
             .eq("status", "active")
             .eq("monitor", True)
+            .in_("de_flag", ["de", "remote"])
             .execute()
         )
         slugs = [r["slug"] for r in (res.data or []) if r.get("slug")]

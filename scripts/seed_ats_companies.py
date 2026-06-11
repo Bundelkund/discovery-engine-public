@@ -68,7 +68,7 @@ def row_from(ats: str, v: dict, crawls: list[str], source: str = "cc") -> dict:
         "source": source,
         "seen_in_crawls": crawls,
         "status": st,
-        "monitor": st != "dead",  # don't daily-poll 404s; Stage A can revive
+        "monitor": st != "dead" and v.get("de_flag") in ("de", "remote"),  # keep-for-DE gate; don't daily-poll 404s/foreign
         "last_job_count": jc,
         "de_flag": v.get("de_flag"),
         "sample_titles": v.get("sample_titles") or [],
