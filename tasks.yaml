@@ -1,7 +1,7 @@
 # Discovery Engine — Task Backlog
 #
-# Companion to ROADMAP.md (Variant-C multi-tenant lives there; this file tracks
-# single-tenant feature epics). Status: backlog | in_progress | done | blocked.
+# Tracks single-tenant feature epics. (Variant-C multi-tenant is out of scope
+# for this repo.) Status: backlog | in_progress | done | blocked.
 # Priority: P1 (next) > P2 > P3. depends_on references task ids.
 
 epics:

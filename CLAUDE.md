@@ -2,7 +2,7 @@
 
 > **Single-tenant** job discovery service — scrapes, scores, and enriches job postings from multiple sources for **one** applicant. Primary consumer: the [Apply Skill](https://github.com/Bundelkund/apply-skill) (separate repo, Claude-Code workflow).
 >
-> Multi-tenant deployment ("WonderApply"-style SaaS) requires Architecture Variant C — see [ROADMAP.md](ROADMAP.md). Out of scope for this repo.
+> Multi-tenant deployment ("WonderApply"-style SaaS) requires Architecture Variant C (multi-tenant). Out of scope for this repo.
 
 ## Architecture
 

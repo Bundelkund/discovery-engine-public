@@ -8,8 +8,8 @@ consumers:
     active: true
 
   # WonderApply integration: activated 2026-05-31 for single-tenant production
-  # use (Florian is the sole WA user). Variant C (multi-tenant) is still on the
-  # ROADMAP — flip back to active: false when multi-user rollout begins, or
+  # use (Florian is the sole WA user). Variant C (multi-tenant) is still out of
+  # scope — flip back to active: false when multi-user rollout begins, or
   # replace this consumer with per-user keys once Variant C lands.
   - id: wonderapply
     name: "WonderApply"

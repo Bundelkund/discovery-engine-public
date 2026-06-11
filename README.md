@@ -2,7 +2,7 @@
 
 > **Single-tenant** job discovery service — scrapes, scores, and aggregates job postings from multiple ATS sources for **one** applicant. Designed to feed the [Apply Skill](https://github.com/Bundelkund/apply-skill) (a Claude-Code workflow for personalized job applications).
 
-This is an **open-source intake layer**. It is **not** a multi-tenant SaaS — see [ROADMAP.md](ROADMAP.md) if you need multi-user support.
+This is an **open-source intake layer**. It is **not** a multi-tenant SaaS — multi-user support is out of scope.
 
 ## What it does
 
@@ -19,7 +19,7 @@ n8n (cron) ──▶ POST /scrape/{source} ──▶ Dedup ──▶ Resolve ─
   - *Aggregators / job boards* — Adzuna, Jooble, Careerjet, TheMuse, LinkedIn, Indeed (jobspy), Arbeitsagentur (BA Jobsuche-API)
   - *Feeds* — RSS
 - **Resolution** (`app/resolution/`): backfills thin job descriptions from the posting origin (ATS / career page) before scoring, so metadata-only sources don't starve keyword matching. Skips tracker hosts (`config/resolution.yaml` `blocked_hosts`) and rejects anti-bot / captcha interstitials via an output-quality gate.
-- **Scoring** (`app/scoring/`): one stage — keyword + archetype matching against a *single* configured profile (Stage 2 LLM/embedding scoring was removed; see ROADMAP.md if reintroducing)
+- **Scoring** (`app/scoring/`): one stage — keyword + archetype matching against a *single* configured profile (Stage 2 LLM/embedding scoring was removed)
 - **Enrichment** (`app/enrichment/`): company-domain resolution, Hunter.io company data
 - **Storage**: Supabase (REST only — no direct DB access required by consumers)
 - **Consumer pattern**: REST. Consumers identify themselves via `X-API-Key` (per-consumer key in `config/api-keys.yaml`).
@@ -106,7 +106,6 @@ curl http://localhost:8091/health
 ## Architecture & contributing
 
 - [CLAUDE.md](CLAUDE.md) — project conventions for AI-assisted development
-- [ROADMAP.md](ROADMAP.md) — multi-tenant evolution path (Variant C, on hold pending consumer alignment)
 - [docs/SCORING.md](docs/SCORING.md) — scoring deep dive
 - [docs/audits/](docs/audits/) — recent system-architecture and publication-readiness audits
 
