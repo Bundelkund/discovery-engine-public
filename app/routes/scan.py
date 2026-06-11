@@ -52,9 +52,9 @@ def _hydrate_from_db(supabase, ats: str | None) -> dict[str, int]:
     rows: list[dict] = []
     page = 0
     while True:
-        q = supabase.table("ats_companies").select("ats,slug").eq("monitor", True)
+        q = supabase.table("ats_companies").select("source,slug").eq("monitor", True)
         if ats:
-            q = q.eq("ats", ats)
+            q = q.eq("source", ats)
         res = q.range(page * 1000, page * 1000 + 999).execute()
         rows.extend(res.data or [])
         if not res.data or len(res.data) < 1000:
@@ -63,7 +63,7 @@ def _hydrate_from_db(supabase, ats: str | None) -> dict[str, int]:
 
     by_ats: dict[str, list[str]] = {}
     for r in rows:
-        by_ats.setdefault(r["ats"], []).append(r["slug"])
+        by_ats.setdefault(r["source"], []).append(r["slug"])
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
@@ -149,7 +149,7 @@ def _all_lever_slugs(supabase) -> list[str]:
     out: list[str] = []
     page = 0
     while True:
-        res = (supabase.table("ats_companies").select("slug").eq("ats", "lever")
+        res = (supabase.table("ats_companies").select("slug").eq("source", "lever")
                .range(page * 1000, page * 1000 + 999).execute())
         out.extend(r["slug"] for r in (res.data or []) if r.get("slug"))
         if not res.data or len(res.data) < 1000:

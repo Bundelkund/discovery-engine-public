@@ -108,6 +108,66 @@ Reversibel: alle via `CREATE INDEX` neu. raw_jobs via re-harvest.
 - jobs_v2 trgm-Index weg → falls App `ILIKE '%x%'` auf `jobs_v2.description` macht → seq scan langsam. Aktuell scans=0, kein Problem. Bei Slow-Query → `CREATE INDEX ... USING gin (description gin_trgm_ops)` neu.
 - DB-Size beobachten: `SELECT pg_size_pretty(pg_database_size(current_database()));` — bei >480 MB eingreifen.
 
+## Schema-Redesign: `sources`-Dimension — ✅ UMGESETZT 2026-06-11
+
+> Status: **IMPLEMENTED**. feasibility-study lief (GO WITH CONDITIONS, [.reports/feasibility-sources-dimension.md](.reports/feasibility-sources-dimension.md)), Plan approved, 4 von 5 Slices live. ADR: [docs/adr/sources-dimension.md](docs/adr/sources-dimension.md).
+>
+> **Abweichungen vom Original-Proposal (begründet):**
+> - Kanonischer Name **`source`** statt `source_code`. Grund: schema-audit-Detector belegte das Synonym als **4-seitig** (ats_companies.ats ↔ jobs/jobs_v2/raw_jobs.source). `source_code` auf einer Seite hätte 3 Schreibweisen erzeugt. `source` trifft alle; Fact-Tables (bereits `source`) bleiben unangetastet → kleinster Blast-Radius. Audit-Vorschlag `ats_source` verworfen (Aggregator-Zeilen sind kein ATS).
+> - Bestehende `ats_companies.source` (Herkunft) → `origin` umbenannt (machte Namen frei).
+> - `type`-CHECK auf **4 Werte** erweitert (`ats`/`aggregator`/`feed`/`internal`) — Live-Daten hatten 4 Quellen (rss/rss_berlinstartupjobs/themuse/company_radar) die nicht ins binäre Schema passten.
+> - **Slice 4 (P5 null-reclassify) DEFERRED, nicht fabriziert:** Messung zeigte die 3019 null-Zeilen haben KEIN gespeichertes DE-Signal (careers_url/location_signal/domain alle leer; Verteilung ist NICHT factorial/softgarden-lastig sondern greenhouse/recruitee/breezy). `de_flag=null` = "Feed trug keine Location" → Recovery braucht **Feed-Re-Scan** (`ats_scanner --revalidate`), keine SQL-Heuristik. Operativer Task, kein Code-Change.
+> - `feed_url`/`careers_url` gedroppt: careers_url 100% leer, feed_url voll aber app-seitig nie aus DB gelesen (jetzt via `sources.feed_url_template` ableitbar).
+>
+> Verify: 324 Tests grün, FK live, `seed --ats lever` → 49 updated exit 0, sources 8/6/3/1.
+
+---
+### Original-Proposal (Archiv, vor Umsetzung)
+> Hart-reversibel (FK + rename) → **ADR-würdig** (CLAUDE.md: hard-to-reverse + trade-off).
+
+**Evidenz** (deep-research 2026-06-11, zitiert): Crunchy/Cybertec/MonPG/Kimball. Kernbefunde:
+- "Repeated string frisst Storage" = **Mythos** bei kurzen Strings/100k rows (TOAST ist kein Dedup, greift erst >2KB). Normalisieren aus Storage-Grund NICHT gerechtfertigt.
+- Lookup-Tabelle gerechtfertigt **nur wenn sie Metadaten trägt** (Label/Template/Type), sonst reicht CHECK constraint.
+- Kimball: read-heavy analytics fact-table → `source` als **denormalisierter Text behalten** ist korrekt, NICHT FK auf hot table (FK = `FOR KEY SHARE`-Lock pro Insert).
+- "data-DRY / nie wiederholen" ist OLTP-Write-Regel, **kein Absolutum** für OLAP-leaning DB.
+
+**Was es löst** (3 Probleme in einem):
+- #5 Naming: `jobs_v2.source` vs `ats_companies.ats` = zwei Namen selbe Domäne → ein kanonischer Term.
+- #4 URL: feed/careers-URL-Templates nur im Code (ats_scanner provider-dict) + volle URLs redundant in ats_companies → Template an EINEM Ort.
+- #2 source-Klassifizierung: ATS (greenhouse, company-feeds) vs Aggregator (indeed/linkedin, search-API) heute ununterscheidbar in einer text-Spalte.
+
+**DDL:**
+```sql
+CREATE TABLE sources (
+  code              text PRIMARY KEY,        -- 'greenhouse','ashby','indeed'
+  label             text NOT NULL,           -- 'Greenhouse' (UI)
+  type              text NOT NULL CHECK (type IN ('ats','aggregator')),
+  base_url_template text,                     -- 'https://boards.greenhouse.io/{slug}'
+  feed_url_template text,
+  is_active         boolean NOT NULL DEFAULT true,
+  notes             text
+);
+-- befüllen mit ~18 vorhandenen Werten (8 ats + ~10 aggregator)
+```
+
+**FK-vs-Text-Regel (Kimball-konform):**
+| Tabelle | Churn | Behandlung |
+|---|---|---|
+| ats_companies (8.467, low-churn) | niedrig | `ats` → rename `source_code`, **FK → sources.code** |
+| jobs_v2 / raw_jobs (hot fact, 100k+) | hoch | `source` bleibt **denormalisierter Text**, KEIN FK (kein Insert-Lock); optional CHECK gegen sources |
+
+**Bonus:** `type='aggregator'` vs `'ats'` macht DE-Filter/monitor-Logik sauber verzweigbar (Aggregatoren haben kein slug/Company-Feed) statt source-Strings hart zu matchen.
+
+**Migrationspfad (nach Feasibility):**
+1. `sources` anlegen + befüllen.
+2. ats_companies: `ats` → `source_code` + FK→sources.
+3. feed_url/careers_url ableitbar machen (Code rendert `template.format(slug=...)`), dann Spalten droppen.
+4. jobs_v2.source: Text lassen, optional CHECK.
+
+**Separat (eigenes Projekt, hoher ROI):** ESCO `profession_id` als hybrid-Feld (raw title behalten + normalized FK, semantic mapping via embeddings). NICHT Teil dieser Migration.
+
+**Verworfen:** "alles entnormalisieren / nie wiederholen" als Pauschalregel — Fact-Tables denormalisiert lassen (Kimball).
+
 ## Dateien
 
 - `scripts/seed_ats_companies.py:71` — Fix A

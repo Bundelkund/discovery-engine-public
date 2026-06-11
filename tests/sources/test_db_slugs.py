@@ -8,8 +8,11 @@ from app.sources import db_slugs
 def _mock_client(slug_rows):
     """Build a chained MagicMock supabase client returning slug_rows."""
     client = MagicMock()
+    # query chain: select -> eq(source) -> eq(status) -> eq(monitor) -> in_(de_flag) -> execute
     chain = (
-        client.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value
+        client.table.return_value.select.return_value
+        .eq.return_value.eq.return_value.eq.return_value
+        .in_.return_value
     )
     chain.execute.return_value = SimpleNamespace(data=slug_rows)
     return client

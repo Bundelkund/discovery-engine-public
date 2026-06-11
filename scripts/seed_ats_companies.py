@@ -2,7 +2,7 @@
 """Seed/refresh public.ats_companies from ATS-scanner enumeration JSON.
 
 No-delete registry: every slug ever discovered keeps a row. Idempotent upsert on
-(ats, slug). `initial_job_count` + `discovered_at` are set once (on first insert)
+(source, slug). `initial_job_count` + `discovered_at` are set once (on first insert)
 and never overwritten on re-run; everything else (status, last_job_count, de_flag,
 sample_titles, seen_in_crawls, last_checked_at) reflects the latest validate pass.
 
@@ -62,10 +62,9 @@ def row_from(ats: str, v: dict, crawls: list[str], source: str = "cc") -> dict:
     st = status_of(v)
     jc = v.get("job_count") or 0
     return {
-        "ats": ats,
+        "source": ats,                  # canonical provider col (renamed from `ats`)
         "slug": v["slug"],
-        "feed_url": v.get("feed_url"),
-        "source": source,
+        "origin": source,               # provenance cc/scrape/manual (renamed from `source`)
         "seen_in_crawls": crawls,
         "status": st,
         "monitor": st != "dead" and v.get("de_flag") in ("de", "remote"),  # keep-for-DE gate; don't daily-poll 404s/foreign
@@ -83,7 +82,7 @@ def existing_keys(client: httpx.Client, base: str, hdr: dict, ats: str) -> set[s
         r = client.get(
             f"{base}/{TABLE}",
             headers=hdr,
-            params={"select": "slug", "ats": f"eq.{ats}", "limit": 1000, "offset": off},
+            params={"select": "slug", "source": f"eq.{ats}", "limit": 1000, "offset": off},
         )
         r.raise_for_status()
         batch = r.json()
@@ -101,7 +100,7 @@ def upsert(client: httpx.Client, base: str, hdr: dict, rows: list[dict]) -> None
         resp = client.post(
             f"{base}/{TABLE}",
             headers=h,
-            params={"on_conflict": "ats,slug"},
+            params={"on_conflict": "source,slug"},
             content=json.dumps(chunk),
         )
         if resp.status_code >= 300:
