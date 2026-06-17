@@ -15,6 +15,9 @@ class JobRepository(BaseRepository):
     # reads and writes follow the active shelf without a restart or redeploy.
     # Access via self._table rather than the class constant everywhere.
 
+    # Bulk-upsert chunk size: one PostgREST request per chunk instead of per row.
+    _UPSERT_CHUNK = 500
+
     @property
     def _table(self) -> str:
         """Active jobs shelf: JOBS_TABLE env var (default 'jobs_v2')."""
@@ -136,22 +139,45 @@ class JobRepository(BaseRepository):
                 }
             )
 
-        results: list[bool] = []
-        for row in rows:
+        # Bulk upsert in chunks instead of one request per row. Refine drains the
+        # whole raw_jobs backlog into jobs_v2; the old per-row path issued one upsert
+        # per job, and draining a 44k bootstrap that way saturated the DB (270s
+        # checkpoints, pooler timeouts, /health down). jobs_v2's UNIQUE
+        # (source, external_id) is a full constraint, so a list upsert with
+        # on_conflict works directly. Per-row fallback ONLY on a chunk error so the
+        # per-row success contract (caller marks only True rows 'refined') is kept and
+        # one bad row never drops its whole chunk.
+        table = self._table
+        results: list[bool] = [False] * len(rows)
+        for start in range(0, len(rows), self._UPSERT_CHUNK):
+            chunk = rows[start : start + self._UPSERT_CHUNK]
             try:
-                table = self._table
                 await asyncio.to_thread(
-                    lambda r=row, t=table: self.client.table(t)
-                    .upsert(r, on_conflict="source,external_id")
+                    lambda c=chunk, t=table: self.client.table(t)
+                    .upsert(c, on_conflict="source,external_id")
                     .execute()
                 )
-                results.append(True)
+                for i in range(len(chunk)):
+                    results[start + i] = True
             except Exception as exc:
-                logger.error(
-                    "upsert_job_failed",
-                    extra={"url": row["url"][:80], "error": str(exc)},
+                logger.warning(
+                    "jobs_bulk_upsert_fallback",
+                    extra={"chunk": len(chunk), "error": str(exc)[:200]},
                 )
-                results.append(False)
+                for i, row in enumerate(chunk):
+                    try:
+                        await asyncio.to_thread(
+                            lambda r=row, t=table: self.client.table(t)
+                            .upsert(r, on_conflict="source,external_id")
+                            .execute()
+                        )
+                        results[start + i] = True
+                    except Exception as exc2:
+                        logger.error(
+                            "upsert_job_failed",
+                            extra={"url": row["url"][:80], "error": str(exc2)},
+                        )
+                        results[start + i] = False
         return results
 
     async def mark_expired(self, threshold_days: int) -> int:

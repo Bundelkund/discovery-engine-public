@@ -37,10 +37,11 @@ async def test_upsert_includes_last_seen_at():
 
     upserted_rows: list[dict] = []
 
-    def _fake_upsert(row, on_conflict=None):
-        upserted_rows.append(row)
+    def _fake_upsert(payload, on_conflict=None):
+        rows = payload if isinstance(payload, list) else [payload]
+        upserted_rows.extend(rows)
         mock = MagicMock()
-        mock.execute.return_value = MagicMock(data=[row])
+        mock.execute.return_value = MagicMock(data=rows)
         return mock
 
     repo.client.table.return_value.upsert = _fake_upsert
@@ -59,10 +60,11 @@ async def test_upsert_sets_status_active():
 
     upserted_rows: list[dict] = []
 
-    def _fake_upsert(row, on_conflict=None):
-        upserted_rows.append(row)
+    def _fake_upsert(payload, on_conflict=None):
+        rows = payload if isinstance(payload, list) else [payload]
+        upserted_rows.extend(rows)
         mock = MagicMock()
-        mock.execute.return_value = MagicMock(data=[row])
+        mock.execute.return_value = MagicMock(data=rows)
         return mock
 
     repo.client.table.return_value.upsert = _fake_upsert
@@ -90,10 +92,11 @@ async def test_upsert_scraped_at_is_refine_time_not_posting_date():
 
     upserted_rows: list[dict] = []
 
-    def _fake_upsert(row, on_conflict=None):
-        upserted_rows.append(row)
+    def _fake_upsert(payload, on_conflict=None):
+        rows = payload if isinstance(payload, list) else [payload]
+        upserted_rows.extend(rows)
         mock = MagicMock()
-        mock.execute.return_value = MagicMock(data=[row])
+        mock.execute.return_value = MagicMock(data=rows)
         return mock
 
     repo.client.table.return_value.upsert = _fake_upsert
@@ -136,10 +139,11 @@ async def test_upsert_no_profile_id_in_row():
 
     upserted_rows: list[dict] = []
 
-    def _fake_upsert(row, on_conflict=None):
-        upserted_rows.append(row)
+    def _fake_upsert(payload, on_conflict=None):
+        rows = payload if isinstance(payload, list) else [payload]
+        upserted_rows.extend(rows)
         mock = MagicMock()
-        mock.execute.return_value = MagicMock(data=[row])
+        mock.execute.return_value = MagicMock(data=rows)
         return mock
 
     repo.client.table.return_value.upsert = _fake_upsert
@@ -160,6 +164,58 @@ async def test_upsert_empty_list_returns_empty():
 
     assert result == []
     repo.client.table.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upsert_bulk_one_request_per_chunk():
+    """A batch upserts as a single list request, not one request per row."""
+    repo = _make_repo()
+
+    calls: list = []
+
+    def _fake_upsert(payload, on_conflict=None):
+        calls.append(payload)
+        rows = payload if isinstance(payload, list) else [payload]
+        mock = MagicMock()
+        mock.execute.return_value = MagicMock(data=rows)
+        return mock
+
+    repo.client.table.return_value.upsert = _fake_upsert
+
+    result = await repo.upsert(
+        [_scored_job(external_id="a"), _scored_job(external_id="b"), _scored_job(external_id="c")]
+    )
+
+    assert result == [True, True, True]
+    assert len(calls) == 1, "3 jobs must upsert in ONE bulk request, not 3"
+    assert isinstance(calls[0], list) and len(calls[0]) == 3
+
+
+@pytest.mark.asyncio
+async def test_upsert_falls_back_to_per_row_on_bulk_error():
+    """If the bulk chunk errors, retry per-row so no good row is dropped."""
+    repo = _make_repo()
+
+    calls: list = []
+
+    def _fake_upsert(payload, on_conflict=None):
+        calls.append(payload)
+        if isinstance(payload, list):
+            raise Exception("bulk boom (e.g. ON CONFLICT cannot affect row twice)")
+        mock = MagicMock()
+        mock.execute.return_value = MagicMock(data=[payload])
+        return mock
+
+    repo.client.table.return_value.upsert = _fake_upsert
+
+    result = await repo.upsert([_scored_job(external_id="a"), _scored_job(external_id="b")])
+
+    assert result == [True, True], "per-row fallback still upserts both"
+    assert isinstance(calls[0], list) and len(calls[0]) == 2, "first attempt is the bulk chunk"
+    assert [c for c in calls[1:]] and all(isinstance(c, dict) for c in calls[1:]), (
+        "fallback issues single-row upserts"
+    )
+    assert len(calls[1:]) == 2
 
 
 # ---------------------------------------------------------------------------
