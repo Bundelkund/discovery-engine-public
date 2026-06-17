@@ -32,6 +32,15 @@ class Settings(BaseSettings):
     #   5. python scripts/migrate_jobs_v2.py --apply-drop (requires --report pass same run)
     jobs_table: str = "jobs_v2"
 
+    # Autonomous refine scheduler (app/services/refine_runner.py). The engine
+    # drains raw_jobs(status='new') → jobs_v2 on its own loop, so the pipeline no
+    # longer depends on an external n8n cron hitting POST /refine. Set
+    # REFINE_AUTO_ENABLED=false to fall back to purely manual/external triggering.
+    refine_auto_enabled: bool = True
+    refine_interval_seconds: int = 300   # gap between drain cycles
+    refine_batch_limit: int = 200        # raw_jobs fetched per pass
+    refine_max_passes: int = 100         # safety cap on passes per cycle (drain-until-empty)
+
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",
         "extra": "ignore",

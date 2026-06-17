@@ -66,6 +66,46 @@ class RawJobRepository(BaseRepository):
         )
         return result.data or []
 
+    async def backlog_metrics(self) -> dict:
+        """Health signal for the refine inbox: how many rows are stuck 'new' and
+        how old the oldest one is.
+
+        ``new_count`` climbing or ``oldest_new_age_hours`` exceeding the scrape
+        cadence means refine has stalled (the exact failure that left jobs_v2
+        frozen for 8 days, undetected). Surfaced on /health so monitoring can
+        alert long before the shelf goes stale.
+        """
+        from datetime import datetime, timezone
+
+        count_res = await asyncio.to_thread(
+            lambda: self.client.table(self.TABLE)
+            .select("id", count="exact")
+            .eq("status", "new")
+            .limit(1)
+            .execute()
+        )
+        new_count = count_res.count or 0
+
+        oldest_age_hours = 0.0
+        if new_count:
+            oldest_res = await asyncio.to_thread(
+                lambda: self.client.table(self.TABLE)
+                .select("ingested_at")
+                .eq("status", "new")
+                .order("ingested_at")
+                .limit(1)
+                .execute()
+            )
+            rows = oldest_res.data or []
+            if rows and rows[0].get("ingested_at"):
+                oldest = datetime.fromisoformat(rows[0]["ingested_at"])
+                if oldest.tzinfo is None:
+                    oldest = oldest.replace(tzinfo=timezone.utc)
+                delta = datetime.now(timezone.utc) - oldest
+                oldest_age_hours = round(delta.total_seconds() / 3600, 1)
+
+        return {"new_count": new_count, "oldest_new_age_hours": oldest_age_hours}
+
     async def mark_status(self, job_id: str, status: str) -> None:
         """Update the status of a single raw_jobs row.
 

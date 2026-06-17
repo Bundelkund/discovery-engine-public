@@ -116,9 +116,14 @@ class JobRepository(BaseRepository):
                     "content_hash": job.content_hash,
                     "archetype": job.archetype,
                     "company_domain": job.company_domain,
-                    "scraped_at": (
-                        job.posted_at.isoformat() if job.posted_at else now
-                    ),
+                    # scraped_at = wall-clock time this job was last refined onto the
+                    # shelf — NOT the posting date. It previously stored job.posted_at,
+                    # which made `GET /jobs?max_age_days=N` (filters scraped_at >= now-N)
+                    # return nothing: every row carried its original (often months-old)
+                    # posting date, so "scraped in the last day" matched zero rows even
+                    # while scraping ran fine. first_seen_at / last_seen_at remain the
+                    # canonical freshness fields (first appearance vs. still-active).
+                    "scraped_at": now,
                     "last_seen_at": now,
                     "status": "active",
                     # Bundle-B additive columns

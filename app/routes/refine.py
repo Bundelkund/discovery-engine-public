@@ -16,44 +16,24 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
-from app.dependencies import get_supabase, require_scope
-from app.services.refine_pipeline import RefinePipeline
+from app.dependencies import require_scope
+from app.services.refine_runner import drain
 
 logger = logging.getLogger(__name__)
 
 refine_router = APIRouter(tags=["refine"])
 
-# Single-flight guard: refine has no atomic row-claim (fetch_new is a plain
-# SELECT status='new'). If an n8n cron fires /refine while a prior pass is still
-# draining the same batch, both would process the same rows — the second pass
-# would mark a just-refined job 'duplicate' against the first pass's freshly
-# added MinHash bands, and double the enrichment spend. This module-level flag
-# serialises passes WITHIN one process: there is no `await` between the check and
-# the set, so it is atomic w.r.t. the asyncio event loop.
-# CAVEAT: only covers a single uvicorn process. With multiple workers, promote to
-# a Postgres advisory lock (pg_try_advisory_lock) or an atomic SELECT ... FOR
-# UPDATE SKIP LOCKED claim on raw_jobs.
-_refine_running = False
+# Single-flight, the drain loop, and the scheduler now live in
+# app/services/refine_runner.py so the manual endpoint and the internal scheduler
+# share ONE guard (two separate guards = no mutual exclusion between them). The
+# engine drains autonomously via that scheduler; this endpoint stays as a manual
+# kick / external-cron safety net and is fully idempotent.
 
 
-async def _run_refine(limit: int) -> None:
-    """Background worker: fresh Supabase client, one refine pass (single-flight)."""
-    global _refine_running
-    if _refine_running:
-        logger.info("refine_skip_already_running", extra={"limit": limit})
-        return
-    _refine_running = True
-
-    from app.dependencies import get_supabase as _gs
-
-    supabase = _gs()
-    try:
-        summary = await RefinePipeline(supabase).run(limit=limit)
-        logger.info("refine_run_done", extra=summary)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("refine_run_failed", extra={"error": str(exc)})
-    finally:
-        _refine_running = False
+async def _run_refine(limit: int, max_passes: int) -> None:
+    """Background worker: one full drain cycle (single-flight via refine_runner)."""
+    summary = await drain(limit=limit, max_passes=max_passes)
+    logger.info("refine_run_done", extra=summary)
 
 
 @refine_router.post(
@@ -63,10 +43,17 @@ async def _run_refine(limit: int) -> None:
 )
 async def trigger_refine(
     background_tasks: BackgroundTasks,
-    limit: int = Query(100, ge=1, le=1000, description="max raw_jobs to drain this pass"),
-    supabase=Depends(get_supabase),
+    limit: int = Query(100, ge=1, le=1000, description="max raw_jobs per pass"),
+    max_passes: int = Query(
+        1, ge=1, le=1000,
+        description="passes this call: 1 = single pass (default), higher = drain-until-empty",
+    ),
 ):
-    """Kick off one refine pass over raw_jobs(status='new'). Returns 202 + run info."""
-    background_tasks.add_task(_run_refine, limit)
-    logger.info("refine_run_started", extra={"limit": limit})
-    return {"status": "running", "limit": limit}
+    """Kick off a refine drain over raw_jobs(status='new'). Returns 202 + run info.
+
+    ``max_passes=1`` keeps the historical single-pass behaviour; pass a higher
+    value (or rely on the internal scheduler) to drain a backlog in one call.
+    """
+    background_tasks.add_task(_run_refine, limit, max_passes)
+    logger.info("refine_run_started", extra={"limit": limit, "max_passes": max_passes})
+    return {"status": "running", "limit": limit, "max_passes": max_passes}
