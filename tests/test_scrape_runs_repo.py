@@ -54,6 +54,24 @@ async def test_record_start_returns_id():
 
 
 @pytest.mark.asyncio
+async def test_reclaim_stale_running_marks_failed():
+    """Startup reclaim closes orphaned 'running' rows (status→failed)."""
+    client = MagicMock()
+    client.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(
+        data=[{"id": "a"}, {"id": "b"}]
+    )
+
+    n = await ScrapeRunRepository(client).reclaim_stale_running()
+
+    assert n == 2
+    update_arg = client.table.return_value.update.call_args[0][0]
+    assert update_arg["status"] == "failed"
+    assert "finished_at" in update_arg
+    # only 'running' rows are reclaimed
+    client.table.return_value.update.return_value.eq.assert_called_once_with("status", "running")
+
+
+@pytest.mark.asyncio
 async def test_latest_per_source_keeps_newest_per_source():
     """Rows arrive newest-first; keep the first (newest) seen per source."""
     client = MagicMock()

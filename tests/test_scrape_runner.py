@@ -119,6 +119,31 @@ async def test_run_due_isolates_source_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_run_due_source_timeout_marks_failed_and_continues(monkeypatch):
+    """A source exceeding the per-source timeout is marked 'failed'; the next runs."""
+    runs = _FakeRuns(last_map={"slowsrc": None, "adzuna": None})
+    monkeypatch.setattr(runner, "_enabled_sources", lambda: ["slowsrc", "adzuna"])
+    monkeypatch.setattr(runner, "ScrapeRunRepository", lambda _c: runs)
+
+    class _SlowOrch:
+        def __init__(self, _c):
+            pass
+
+        async def run(self, source_id: str):
+            if source_id == "slowsrc":
+                await asyncio.sleep(10)  # exceeds the tiny timeout below
+            return SimpleNamespace(jobs_found=1, jobs_stored=1, duration_ms=1)
+
+    monkeypatch.setattr(runner, "ScrapeOrchestrator", lambda c: _SlowOrch(c))
+
+    totals = await runner.run_due(min_interval_hours=24, source_timeout_seconds=0.05)
+
+    assert totals["failed"] == 1 and totals["scraped"] == 1
+    statuses = {src: status for src, (_, status, _, _) in zip(runs.started, runs.finished)}
+    assert statuses == {"slowsrc": "failed", "adzuna": "done"}
+
+
+@pytest.mark.asyncio
 async def test_run_due_single_flight_skips(monkeypatch):
     """A second cycle is a no-op while one is already running."""
     runs = _FakeRuns()
@@ -148,7 +173,7 @@ async def test_scheduler_loop_runs_then_stops_on_event(monkeypatch):
     stop = asyncio.Event()
     cycles = {"n": 0}
 
-    async def _fake_run_due(min_interval_hours):
+    async def _fake_run_due(min_interval_hours, source_timeout_seconds=1800):
         cycles["n"] += 1
         stop.set()
         return {"scraped": 0}

@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     scrape_auto_enabled: bool = True
     scrape_check_interval_seconds: int = 3600   # loop wake interval
     scrape_min_interval_hours: int = 24         # once per day per source
+    scrape_source_timeout_seconds: int = 1800   # per-source cap so one hung source
+                                                # can't wedge the whole cycle (the big
+                                                # ATS boards fetch in ~15min; 30min is slack)
 
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",

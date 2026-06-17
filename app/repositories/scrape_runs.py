@@ -73,6 +73,32 @@ class ScrapeRunRepository(BaseRepository):
             .execute()
         )
 
+    async def reclaim_stale_running(self) -> int:
+        """Mark every 'running' row as 'failed' — call once at scheduler startup.
+
+        A container redeploy kills the process mid-scrape, so the in-flight source's
+        row never gets a record_finish and lingers as a 'running' zombie (clutters
+        /health, though last_success_at ignores it). At startup no scrape is
+        legitimately in flight yet (single-container deploy), so any 'running' row is
+        an orphan from the previous process and is safe to close. Returns the count
+        reclaimed.
+        """
+        from datetime import datetime, timezone
+
+        res = await asyncio.to_thread(
+            lambda: self.client.table(self.TABLE)
+            .update(
+                {
+                    "status": "failed",
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "error": "abandoned: process restart",
+                }
+            )
+            .eq("status", "running")
+            .execute()
+        )
+        return len(res.data or [])
+
     async def latest_per_source(self) -> list[dict]:
         """Latest run per source for /health (source, status, finished_at, stats).
 
