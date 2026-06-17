@@ -2,12 +2,53 @@
 Guard: RawJobRepository.insert_batch must persist raw_data verbatim (never '{}').
 Tests one RawJob per representative source payload shape.
 """
-import asyncio
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from app.models.job import RawJob
 from app.repositories.raw_jobs import RawJobRepository
+
+
+class _FakeTable:
+    """Supports the insert_batch chain: select(...).eq/neq/range().execute() for the
+    existing-key pre-filter (returns no existing rows), and insert(list).execute()."""
+
+    def __init__(self, captured: list):
+        self._captured = captured
+        self._mode = None
+        self._rows: list = []
+
+    def select(self, *a, **k):
+        self._mode = "select"
+        return self
+
+    def eq(self, *a, **k):
+        return self
+
+    def neq(self, *a, **k):
+        return self
+
+    def range(self, *a, **k):
+        return self
+
+    def insert(self, rows):
+        self._mode = "insert"
+        self._rows = rows if isinstance(rows, list) else [rows]
+        return self
+
+    def execute(self):
+        if self._mode == "select":
+            return MagicMock(data=[])  # nothing known yet → all rows are fresh
+        self._captured.extend(self._rows)
+        return MagicMock(data=self._rows)
+
+
+class _FakeClient:
+    def __init__(self, captured: list):
+        self._captured = captured
+
+    def table(self, _name: str) -> _FakeTable:
+        return _FakeTable(self._captured)
 
 
 def _make_repo() -> RawJobRepository:
@@ -73,20 +114,7 @@ async def test_raw_data_not_empty_for_source(source: str, payload: dict):
     )
 
     inserted_rows: list[dict] = []
-
-    def _fake_insert(table_name):
-        mock_table = MagicMock()
-
-        def _insert(row):
-            inserted_rows.append(row)
-            mock_execute = MagicMock()
-            mock_execute.execute.return_value = MagicMock(data=[row])
-            return mock_execute
-
-        mock_table.insert = _insert
-        return mock_table
-
-    repo.client.table = _fake_insert
+    repo.client = _FakeClient(inserted_rows)
 
     count = await repo.insert_batch([job])
 
