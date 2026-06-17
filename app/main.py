@@ -21,6 +21,7 @@ from app.routes.companies_api import companies_api_router
 from app.routes.scan import scan_router
 from app.routes.refine import refine_router
 from app.services.refine_runner import scheduler_loop
+from app.services.scrape_runner import scheduler_loop as scrape_scheduler_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,16 +58,36 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("refine_scheduler_disabled")
 
+    # Autonomous scrape: trigger source scrapes from inside the engine on a daily
+    # cadence (persistent scrape_runs gate), so the fetch path no longer depends on
+    # an external n8n cron. Independent stop event + task, same start/stop shape.
+    scrape_stop = asyncio.Event()
+    scrape_task: asyncio.Task | None = None
+    if settings.scrape_auto_enabled:
+        scrape_task = asyncio.create_task(
+            scrape_scheduler_loop(
+                scrape_stop,
+                check_interval_seconds=settings.scrape_check_interval_seconds,
+                min_interval_hours=settings.scrape_min_interval_hours,
+            )
+        )
+    else:
+        logger.info("scrape_scheduler_disabled")
+
     try:
         yield
     finally:
-        if refine_task is not None:
-            refine_stop.set()          # let the loop exit at its next checkpoint
-            refine_task.cancel()       # interrupt an in-flight sleep/drain on shutdown
-            try:
-                await refine_task
-            except asyncio.CancelledError:
-                pass
+        for stop_event, task in (
+            (refine_stop, refine_task),
+            (scrape_stop, scrape_task),
+        ):
+            if task is not None:
+                stop_event.set()       # let the loop exit at its next checkpoint
+                task.cancel()          # interrupt an in-flight sleep/cycle on shutdown
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
 
 app = FastAPI(title="Discovery Engine", version="0.1.0", lifespan=lifespan)

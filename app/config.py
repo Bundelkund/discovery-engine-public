@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     refine_batch_limit: int = 200        # raw_jobs fetched per pass
     refine_max_passes: int = 100         # safety cap on passes per cycle (drain-until-empty)
 
+    # Autonomous scrape scheduler (app/services/scrape_runner.py). The engine
+    # triggers its own source scrapes so the fetch path no longer depends on an
+    # external n8n cron hitting POST /scrape/{source}. The cadence gate is
+    # persistent (scrape_runs table): a source is scraped at most once per
+    # scrape_min_interval_hours, so a redeploy does NOT re-hit external/paid APIs.
+    # Set SCRAPE_AUTO_ENABLED=false to fall back to purely manual/external triggering.
+    scrape_auto_enabled: bool = True
+    scrape_check_interval_seconds: int = 3600   # loop wake interval
+    scrape_min_interval_hours: int = 24         # once per day per source
+
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",
         "extra": "ignore",
