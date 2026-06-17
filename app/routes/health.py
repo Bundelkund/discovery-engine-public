@@ -8,6 +8,7 @@ from app.dependencies import get_supabase
 from app.registry.enricher_registry import EnricherRegistry
 from app.registry.source_registry import SourceRegistry
 from app.repositories.jobs import JobRepository
+from app.repositories.raw_jobs import RawJobRepository
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ async def health(supabase=Depends(get_supabase)):
         "dq_flags_pct": 0.0,
         "jobs_last_24h": 0,
     }
+    # Refine inbox backlog — stalled-pipeline early warning (raw_jobs stuck 'new').
+    refine_backlog = {"new_count": 0, "oldest_new_age_hours": 0.0}
     if supabase is not None:
         try:
             coverage = await asyncio.to_thread(
@@ -46,6 +49,10 @@ async def health(supabase=Depends(get_supabase)):
             )
         except Exception as exc:
             logger.warning("coverage_metrics_health_failed", extra={"error": str(exc)})
+        try:
+            refine_backlog = await RawJobRepository(supabase).backlog_metrics()
+        except Exception as exc:
+            logger.warning("refine_backlog_health_failed", extra={"error": str(exc)})
 
     return {
         "status": "ok",
@@ -53,4 +60,5 @@ async def health(supabase=Depends(get_supabase)):
         "enrichers": EnricherRegistry.registered_ids(),
         "data_quality": data_quality,
         "coverage": coverage,
+        "refine_backlog": refine_backlog,
     }

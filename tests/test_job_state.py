@@ -73,6 +73,41 @@ async def test_upsert_sets_status_active():
 
 
 @pytest.mark.asyncio
+async def test_upsert_scraped_at_is_refine_time_not_posting_date():
+    """scraped_at must be the wall-clock refine time, NOT job.posted_at.
+
+    Regression: storing posted_at in scraped_at made GET /jobs?max_age_days=N
+    (filters scraped_at >= now-N) return nothing, because rows carried their
+    original (often months-old) posting date. scraped_at must be ~now even when
+    the job has a much older posted_at.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    repo = _make_repo()
+    old_posted = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    job = _scored_job()
+    job.posted_at = old_posted
+
+    upserted_rows: list[dict] = []
+
+    def _fake_upsert(row, on_conflict=None):
+        upserted_rows.append(row)
+        mock = MagicMock()
+        mock.execute.return_value = MagicMock(data=[row])
+        return mock
+
+    repo.client.table.return_value.upsert = _fake_upsert
+
+    await repo.upsert([job])
+
+    scraped_at = datetime.fromisoformat(upserted_rows[0]["scraped_at"])
+    assert scraped_at.year != 2020, "scraped_at must not be the posting date"
+    assert datetime.now(timezone.utc) - scraped_at < timedelta(minutes=5), (
+        "scraped_at must be ~now (the refine time)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_upsert_uses_conflict_on_source_external_id():
     """upsert() must use on_conflict='source,external_id'."""
     repo = _make_repo()
