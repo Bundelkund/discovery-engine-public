@@ -15,6 +15,16 @@ class RawJobRepository(BaseRepository):
     # instead of 17k.
     _INSERT_CHUNK = 500
 
+    # Refine source-priority tiers. fetch_new drains tier 1 first, then the middle
+    # (any unlisted source), then tier 3 last. greenhouse alone is ~40% of the inbox
+    # and is high-volume / low-signal; draining it first (or in arbitrary physical
+    # order) let it hog refine's per-job HTTP-resolution throughput while the
+    # targeted niche sources actually applied through sat unrefined for days.
+    # debt: priorities hardcoded; move to config/refine.yaml when a second consumer
+    # needs a different order (upgrade-trigger: multi-tenant shelf).
+    REFINE_PRIORITY_SOURCES = ["softgarden", "personio", "adzuna", "linkedin", "arbeitsagentur"]
+    REFINE_DEFERRED_SOURCES = ["greenhouse"]
+
     @staticmethod
     def _build_row(job: RawJob) -> dict:
         row: dict = {
@@ -150,15 +160,56 @@ class RawJobRepository(BaseRepository):
         return inserted
 
     async def fetch_new(self, limit: int = 100) -> list[dict]:
-        """Return up to `limit` raw_jobs rows with status='new' for the refine pipeline."""
-        result = await asyncio.to_thread(
-            lambda: self.client.table(self.TABLE)
-            .select("*")
-            .eq("status", "new")
+        """Return up to `limit` raw_jobs(status='new') rows for the refine pipeline,
+        ordered by SOURCE PRIORITY, then oldest-first within each tier.
+
+        Three tiers (see ``REFINE_PRIORITY_SOURCES`` / ``REFINE_DEFERRED_SOURCES``):
+
+          1. priority sources  — drained first
+          2. everything else   — middle
+          3. deferred sources  — only once the rest of the inbox is empty
+
+        The batch is filled tier by tier: tier 2 is queried only if tier 1 did not
+        already fill ``limit``, tier 3 only if 1+2 did not. ``ingested_at`` ascending
+        inside each tier keeps it FIFO per source, so the oldest targeted jobs clear
+        first and no single source starves within its tier. (All rows carry a source,
+        so the tier-2 NOT-IN filter loses nothing.)
+        """
+        def _new_in_order(builder):
+            return builder.eq("status", "new").order("ingested_at")
+
+        out: list[dict] = []
+
+        # Tier 1 — priority sources.
+        res = await asyncio.to_thread(
+            lambda: _new_in_order(self.client.table(self.TABLE).select("*"))
+            .in_("source", self.REFINE_PRIORITY_SOURCES)
             .limit(limit)
             .execute()
         )
-        return result.data or []
+        out.extend(res.data or [])
+
+        # Tier 2 — any source that is neither prioritised nor deferred.
+        if len(out) < limit:
+            res = await asyncio.to_thread(
+                lambda: _new_in_order(self.client.table(self.TABLE).select("*"))
+                .not_.in_("source", self.REFINE_PRIORITY_SOURCES + self.REFINE_DEFERRED_SOURCES)
+                .limit(limit - len(out))
+                .execute()
+            )
+            out.extend(res.data or [])
+
+        # Tier 3 — deferred high-volume sources (greenhouse) last.
+        if len(out) < limit:
+            res = await asyncio.to_thread(
+                lambda: _new_in_order(self.client.table(self.TABLE).select("*"))
+                .in_("source", self.REFINE_DEFERRED_SOURCES)
+                .limit(limit - len(out))
+                .execute()
+            )
+            out.extend(res.data or [])
+
+        return out[:limit]
 
     async def backlog_metrics(self) -> dict:
         """Health signal for the refine inbox: how many rows are stuck 'new' and
