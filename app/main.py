@@ -70,6 +70,7 @@ async def lifespan(app: FastAPI):
                 check_interval_seconds=settings.scrape_check_interval_seconds,
                 min_interval_hours=settings.scrape_min_interval_hours,
                 source_timeout_seconds=settings.scrape_source_timeout_seconds,
+                daily_anchor_hour=settings.scrape_daily_anchor_hour_utc,
             )
         )
     else:

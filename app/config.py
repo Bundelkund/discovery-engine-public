@@ -49,10 +49,17 @@ class Settings(BaseSettings):
     # Set SCRAPE_AUTO_ENABLED=false to fall back to purely manual/external triggering.
     scrape_auto_enabled: bool = True
     scrape_check_interval_seconds: int = 3600   # loop wake interval
-    scrape_min_interval_hours: int = 24         # once per day per source
+    scrape_min_interval_hours: int = 24         # once per day per source (fallback gate)
     scrape_source_timeout_seconds: int = 1800   # per-source cap so one hung source
                                                 # can't wedge the whole cycle (the big
                                                 # ATS boards fetch in ~15min; 30min is slack)
+    # Anchor the daily cadence to a FIXED wall-clock hour (UTC) instead of "24h since
+    # last run". The interval gate drifts ~1h later each day (run completes a bit later
+    # than the day before), eventually crossing downstream consumers like the Telegram
+    # digest. Anchored: a source is due once per day after this hour and skips for the
+    # rest of the day — same redeploy/quota safety as the interval gate. Set to None to
+    # restore the pure interval behaviour. 3 = 03:00 UTC, long before the 12:35 digest.
+    scrape_daily_anchor_hour_utc: int | None = 3
 
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",

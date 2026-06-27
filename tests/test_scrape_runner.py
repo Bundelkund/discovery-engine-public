@@ -173,7 +173,7 @@ async def test_scheduler_loop_runs_then_stops_on_event(monkeypatch):
     stop = asyncio.Event()
     cycles = {"n": 0}
 
-    async def _fake_run_due(min_interval_hours, source_timeout_seconds=1800):
+    async def _fake_run_due(min_interval_hours, source_timeout_seconds=1800, daily_anchor_hour=None):
         cycles["n"] += 1
         stop.set()
         return {"scraped": 0}
@@ -186,3 +186,53 @@ async def test_scheduler_loop_runs_then_stops_on_event(monkeypatch):
     )
 
     assert cycles["n"] == 1
+
+
+# --- Anchored cadence (daily_anchor_hour) -------------------------------------
+# The interval gate drifts ~1h later each day; the anchor pins "due" to a fixed
+# UTC hour so completion time can't creep past downstream consumers (the digest).
+
+def _freeze_now(monkeypatch, fixed: datetime):
+    """Pin runner.datetime.now() to a fixed instant for deterministic anchor math."""
+    class _FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+    monkeypatch.setattr(runner, "datetime", _FixedDatetime)
+
+
+@pytest.mark.asyncio
+async def test_anchor_scrapes_when_last_before_todays_anchor(monkeypatch):
+    """Last success before today's anchor (03:00) → due, even if <24h ago."""
+    _freeze_now(monkeypatch, datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc))
+    runs = _FakeRuns(last_map={"adzuna": datetime(2026, 6, 27, 2, 30, tzinfo=timezone.utc)})
+    _patch(monkeypatch, ["adzuna"], runs)
+
+    totals = await runner.run_due(daily_anchor_hour=3)
+
+    assert totals["scraped"] == 1 and totals["skipped"] == 0
+
+
+@pytest.mark.asyncio
+async def test_anchor_skips_when_last_after_todays_anchor(monkeypatch):
+    """Already scraped after today's anchor → skip for the rest of the day (redeploy-safe)."""
+    _freeze_now(monkeypatch, datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc))
+    runs = _FakeRuns(last_map={"adzuna": datetime(2026, 6, 27, 4, 0, tzinfo=timezone.utc)})
+    _patch(monkeypatch, ["adzuna"], runs)
+
+    totals = await runner.run_due(daily_anchor_hour=3)
+
+    assert totals["skipped"] == 1 and totals["scraped"] == 0
+    assert runs.started == []
+
+
+@pytest.mark.asyncio
+async def test_anchor_uses_yesterday_when_before_anchor_hour(monkeypatch):
+    """Before the anchor hour, the anchor is yesterday's; a run after it still skips."""
+    _freeze_now(monkeypatch, datetime(2026, 6, 27, 1, 0, tzinfo=timezone.utc))
+    runs = _FakeRuns(last_map={"adzuna": datetime(2026, 6, 26, 12, 0, tzinfo=timezone.utc)})
+    _patch(monkeypatch, ["adzuna"], runs)
+
+    totals = await runner.run_due(daily_anchor_hour=3)
+
+    assert totals["skipped"] == 1 and totals["scraped"] == 0

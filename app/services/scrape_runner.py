@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.config import load_sources_config
 from app.registry.source_registry import SourceRegistry
@@ -54,8 +54,22 @@ def _enabled_sources() -> list[str]:
     ]
 
 
-async def run_due(min_interval_hours: int = 24, source_timeout_seconds: int = 1800) -> dict:
+async def run_due(
+    min_interval_hours: int = 24,
+    source_timeout_seconds: int = 1800,
+    daily_anchor_hour: int | None = None,
+) -> dict:
     """Scrape every enabled source whose last success is older than the window.
+
+    Two cadence gates (``daily_anchor_hour`` selects which):
+      * anchored (default in prod) — a source is due once per day, after the most
+        recent ``daily_anchor_hour``:00 UTC instant. This does NOT drift: the gate
+        is pinned to a wall-clock hour, so completion time no longer creeps later
+        each day past downstream consumers (e.g. the Telegram digest).
+      * interval (``daily_anchor_hour=None``) — due when last success is older than
+        ``min_interval_hours``. Kept for tests / opt-out.
+    Both share the same redeploy/quota safety: a same-day redeploy re-reads the
+    persistent ``scrape_runs`` state and skips already-done sources.
 
     For each due source: record a 'running' row → ScrapeOrchestrator.run → record
     'done' (with stats) or, on error/timeout, 'failed'. ONLY a 'done' run resets the
@@ -82,11 +96,22 @@ async def run_due(min_interval_hours: int = 24, source_timeout_seconds: int = 18
         runs = ScrapeRunRepository(client)
         now = datetime.now(timezone.utc)
         cutoff_seconds = min_interval_hours * 3600
+        # Anchored gate: most recent <daily_anchor_hour>:00 UTC at or before now.
+        anchor: datetime | None = None
+        if daily_anchor_hour is not None:
+            anchor = now.replace(hour=daily_anchor_hour, minute=0, second=0, microsecond=0)
+            if anchor > now:
+                anchor -= timedelta(days=1)
 
         for source_id in _enabled_sources():
             totals["checked"] += 1
             last = await runs.last_success_at(source_id)
-            if last is not None and (now - last).total_seconds() < cutoff_seconds:
+            if anchor is not None:
+                # Due once per day: skip only if last success already passed today's anchor.
+                if last is not None and last >= anchor:
+                    totals["skipped"] += 1
+                    continue
+            elif last is not None and (now - last).total_seconds() < cutoff_seconds:
                 totals["skipped"] += 1
                 continue
 
@@ -134,6 +159,7 @@ async def scheduler_loop(
     check_interval_seconds: int = 3600,
     min_interval_hours: int = 24,
     source_timeout_seconds: int = 1800,
+    daily_anchor_hour: int | None = None,
 ) -> None:
     """Periodic cadence check, owned by the FastAPI lifespan.
 
@@ -147,7 +173,11 @@ async def scheduler_loop(
     """
     logger.info(
         "scrape_scheduler_started",
-        extra={"check_interval_seconds": check_interval_seconds, "min_interval_hours": min_interval_hours},
+        extra={
+            "check_interval_seconds": check_interval_seconds,
+            "min_interval_hours": min_interval_hours,
+            "daily_anchor_hour": daily_anchor_hour,
+        },
     )
     try:
         from app.dependencies import get_supabase
@@ -164,6 +194,7 @@ async def scheduler_loop(
             await run_due(
                 min_interval_hours=min_interval_hours,
                 source_timeout_seconds=source_timeout_seconds,
+                daily_anchor_hour=daily_anchor_hour,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("scrape_scheduler_cycle_failed", extra={"error": str(exc)})
