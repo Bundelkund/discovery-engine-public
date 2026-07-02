@@ -7,6 +7,7 @@ import yaml
 from app.config import resolve_local_override
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
+from app.services.fetch_cache import FetchCache
 from app.sources.base import BaseScraper
 from app.sources.db_slugs import merge_slugs
 
@@ -26,12 +27,16 @@ class BreezyScraper(BaseScraper):
             slugs = merge_slugs(self._load_slugs(portals_path), self.source_id)
 
             all_jobs = []
+            cache = FetchCache()
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 for slug in slugs:
                     try:
                         url = self.BASE_URL.format(slug=slug)
                         resp = await client.get(url)
                         resp.raise_for_status()
+                        body = resp.text  # raw body (pre-JSON) = stablest checksum input
+                        if await cache.seen_unchanged(self.source_id, slug, body):
+                            continue  # board byte-identical to last run — skip parse+insert
                         positions = resp.json()
                         if not isinstance(positions, list):
                             logger.warning(
@@ -54,6 +59,7 @@ class BreezyScraper(BaseScraper):
                                 raw_data=pos,
                             )
                             all_jobs.append(raw)
+                        await cache.record(self.source_id, slug, body)
                     except Exception as e:
                         logger.warning(f"Breezy slug '{slug}' failed: {e}")
                         continue

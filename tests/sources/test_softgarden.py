@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -110,3 +110,45 @@ async def test_softgarden_fetch_returns_empty_on_no_slugs(tmp_path: Path):
     with patch("app.sources.db_slugs.load_active_slugs", return_value=[]):
         result = await scraper.fetch({"portals_file": str(p)})
     assert result == []
+
+
+def _resp(text: str, elements: list[dict]):
+    r = MagicMock()
+    r.raise_for_status = MagicMock()
+    r.text = text
+    r.json = MagicMock(return_value={"dataFeedElement": elements})
+    return r
+
+
+@pytest.mark.asyncio
+async def test_softgarden_checksum_skip_skips_unchanged_board(tmp_path: Path):
+    """2 boards: unchanged -> skip (no parse/record); changed -> parse + record."""
+    resp_unchanged = _resp("body-unchanged", [{"item": SAMPLE_JP}])
+    changed_jp = {**SAMPLE_JP, "identifier": {"name": "Acme", "value": 777}}
+    resp_changed = _resp("body-changed", [{"item": changed_jp}])
+
+    http_client = MagicMock()
+    http_client.get = AsyncMock(side_effect=[resp_unchanged, resp_changed])
+    acm = MagicMock()
+    acm.__aenter__ = AsyncMock(return_value=http_client)
+    acm.__aexit__ = AsyncMock(return_value=False)
+
+    cache = MagicMock()
+    cache.seen_unchanged = AsyncMock(side_effect=[True, False])  # board1 skip, board2 parse
+    cache.record = AsyncMock()
+
+    with (
+        patch("app.sources.softgarden.merge_slugs", return_value=["b-unchanged", "b-changed"]),
+        patch("app.sources.softgarden.httpx.AsyncClient", return_value=acm),
+        patch("app.sources.softgarden.FetchCache", return_value=cache),
+    ):
+        portals = tmp_path / "portals.yaml"
+        portals.write_text("tracked_companies: []\n")
+        jobs = await SoftgardenScraper().fetch({"portals_file": str(portals)})
+
+    # only the changed board's job is parsed; unchanged board produced nothing
+    assert [j.external_id for j in jobs] == ["777"]
+    assert cache.seen_unchanged.await_count == 2
+    cache.record.assert_awaited_once_with("softgarden", "b-changed", "body-changed")
+    # unchanged board never reached JSON parse
+    resp_unchanged.json.assert_not_called()

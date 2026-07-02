@@ -12,6 +12,7 @@ import yaml
 from app.config import resolve_local_override
 from app.models.job import RawJob
 from app.registry.source_registry import SourceRegistry
+from app.services.fetch_cache import FetchCache
 from app.sources.base import BaseScraper
 from app.sources.db_slugs import load_active_slugs
 
@@ -65,10 +66,11 @@ class FactorialScraper(BaseScraper):
             ]
 
             all_jobs = []
+            cache = FetchCache()
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 for slug, tld in entries:
                     try:
-                        jobs = await self._fetch_company(client, slug, tld)
+                        jobs = await self._fetch_company(client, slug, tld, cache)
                         all_jobs.extend(jobs)
                     except Exception as e:
                         logger.warning(f"Factorial slug '{slug}.{tld}' failed: {e}")
@@ -83,12 +85,19 @@ class FactorialScraper(BaseScraper):
             return []
 
     async def _fetch_company(
-        self, client: httpx.AsyncClient, slug: str, tld: str
+        self, client: httpx.AsyncClient, slug: str, tld: str, cache: FetchCache
     ) -> list[RawJob]:
         url = self.SITEMAP_URL.format(slug=slug, tld=tld)
         resp = await client.get(url)
         resp.raise_for_status()
-        stubs = self._parse_sitemap(resp.text, slug)
+        body = resp.text  # raw sitemap = stablest checksum input
+        fetch_key = f"{slug}.{tld}"
+        # Checksum on the sitemap: unchanged sitemap == unchanged job SET, so skip
+        # the expensive N detail-page fetches AND the re-insert. Jobs already in the
+        # DB from a prior run; dedup would drop them anyway.
+        if await cache.seen_unchanged(self.source_id, fetch_key, body):
+            return []
+        stubs = self._parse_sitemap(body, slug)
         if not stubs:
             return []
 
@@ -104,7 +113,9 @@ class FactorialScraper(BaseScraper):
                     logger.debug(f"Factorial detail fetch failed for {stub.url}: {e}")
                     return stub
 
-        return await asyncio.gather(*(_enrich(s) for s in stubs))
+        jobs = await asyncio.gather(*(_enrich(s) for s in stubs))
+        await cache.record(self.source_id, fetch_key, body)
+        return jobs
 
     def _parse_sitemap(self, xml_text: str, slug: str) -> list[RawJob]:
         try:
