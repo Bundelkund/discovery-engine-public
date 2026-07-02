@@ -21,7 +21,11 @@ sources:
     limit: 50
     proxy: null
   greenhouse:
-    enabled: true
+    # Deaktiviert 2026-07-02: ATS-Enumerator ohne Keyword-Filter -> speichert GANZE Boards
+    # (ein Lauf = 25.609 Jobs = ~177 MB), sprengt die 500-MB-Free-Tier. Wieder aktivieren
+    # erst bei Pro-Upgrade (8 GB) oder mit harter jobs_v2-Retention. Aggregatoren
+    # (indeed/adzuna/...) sind über search_terms selbstbegrenzt und bleiben an.
+    enabled: false
     portals_file: "config/portals.yaml"
   adzuna:
     enabled: true
