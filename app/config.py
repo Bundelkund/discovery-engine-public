@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     # restore the pure interval behaviour. 3 = 03:00 UTC, long before the 12:35 digest.
     scrape_daily_anchor_hour_utc: int | None = 3
 
+    # Per-run ingest cap (Bounded-Active-Market). A single ATS enumerator can dump a whole
+    # board universe in one run (greenhouse 2026-07-02: 25,609 rows → 500-MB free-tier
+    # overflow). This caps how many raw jobs ONE source stores per run, so a cold start
+    # fills the corpus gradually while jobs-v2 retention (pg_cron jobsv2-retention-21d)
+    # bounds the steady state. Aggregators are keyword-limited and stay under the cap; it
+    # only bites the unfiltered ATS dumpers. Per-source override: sources.yaml <src>.ingest_cap.
+    # 0 / None on a source disables the cap for that source.
+    ingest_cap_default: int = 1500
+
     model_config = {
         "env_file": Path(__file__).parent.parent / ".env",
         "extra": "ignore",

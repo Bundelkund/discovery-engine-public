@@ -1,7 +1,7 @@
 import logging
 import time
 
-from app.config import load_sources_config
+from app.config import get_settings, load_sources_config
 from app.models.job import RawJob
 from app.models.responses import ScrapeResponse
 from app.registry.source_registry import SourceRegistry
@@ -43,6 +43,21 @@ class ScrapeOrchestrator:
             scraper = scraper_cls()
             raw_results = await scraper.fetch(source_config)
             response.jobs_found = len(raw_results)
+
+            # Ingest cap (Bounded-Active-Market): stop one ATS enumerator from dumping a
+            # whole board universe in a single run (greenhouse 2026-07-02 → free-tier
+            # overflow). Per-source override sources.yaml <src>.ingest_cap, else global
+            # default; a source may set 0/None to opt out. jobs_found stays the true count.
+            cap = source_config.get("ingest_cap")
+            if cap is None:  # no per-source override → global default
+                cap = get_settings().ingest_cap_default
+            if cap and len(raw_results) > cap:
+                logger.info(
+                    "source_ingest_capped source=%s found=%d dropped=%d capped_to=%d",
+                    source_id, len(raw_results), len(raw_results) - cap, cap,
+                )
+                raw_results = raw_results[:cap]  # debt: blunt slice (board order);
+                # upgrade-trigger: if relevant boards get systematically truncated → cap by recency/relevance
 
             if not raw_results:
                 response.duration_ms = int((time.time() - start) * 1000)
