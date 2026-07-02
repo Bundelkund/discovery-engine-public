@@ -36,7 +36,12 @@ class RawJobRepository(BaseRepository):
             "salary": job.salary,
             "source": job.source,
             "external_id": job.external_id,
-            "raw_data": job.raw_data,
+            # raw_data is intentionally NOT persisted (L1, 2026-07-02): it was 66% of
+            # the raw_jobs table (~106 MB) yet the refine pipeline never reads it back
+            # from the DB — refine works off `description`. The field still lives on the
+            # in-memory RawJob (adapters like arbeitsagentur/factorial read it during the
+            # same fetch), we just don't write the blob to staging. Column dropped in
+            # migration drop-raw-data.sql.
             "content_hash": job.content_hash,
             # posted_at is optional; omit if absent so DB default / NULL applies
         }
@@ -47,8 +52,8 @@ class RawJobRepository(BaseRepository):
     async def insert_batch(self, raw_jobs: list[RawJob]) -> int:
         """Insert raw jobs with status defaulting to 'new'.
 
-        raw_data is persisted verbatim — never overwritten or defaulted to '{}'.
-        Returns the count of successfully inserted rows.
+        raw_data is NOT persisted (L1): it was dead weight in staging (never read by
+        refine) and dominated table size. Returns the count of successfully inserted rows.
 
         Performance: a daily re-scrape re-fetches the SAME postings (jobs stay
         online for weeks), so almost every row collides with the

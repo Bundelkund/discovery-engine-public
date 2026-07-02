@@ -1,5 +1,11 @@
 """
-Guard: RawJobRepository.insert_batch must persist raw_data verbatim (never '{}').
+Guard: RawJobRepository.insert_batch must NOT persist raw_data (L1, 2026-07-02).
+
+raw_data was 66% of the raw_jobs table (~106 MB) yet the refine pipeline never reads
+it back from the DB. It is dropped from staging to reclaim space and keep every insert
+light. The blob still lives on the in-memory RawJob (adapters read it during the same
+fetch) — this test only asserts it never reaches the persisted row, while the real
+columns (title/url/source/external_id/content_hash) still do.
 Tests one RawJob per representative source payload shape.
 """
 import pytest
@@ -95,8 +101,8 @@ _SOURCE_PAYLOADS = {
 
 @pytest.mark.parametrize("source,payload", _SOURCE_PAYLOADS.items())
 @pytest.mark.asyncio
-async def test_raw_data_not_empty_for_source(source: str, payload: dict):
-    """raw_data must equal the full source payload — never '{}'."""
+async def test_raw_data_not_persisted_for_source(source: str, payload: dict):
+    """The persisted staging row must exclude raw_data but keep the real columns."""
     repo = _make_repo()
 
     job = RawJob(
@@ -120,9 +126,10 @@ async def test_raw_data_not_empty_for_source(source: str, payload: dict):
 
     assert count == 1
     assert len(inserted_rows) == 1
-    persisted_raw = inserted_rows[0].get("raw_data")
-    assert persisted_raw, f"raw_data is empty/falsy for source '{source}'"
-    assert persisted_raw != {}, f"raw_data must not be '{{}}' for source '{source}'"
-    assert persisted_raw == payload, (
-        f"raw_data for source '{source}' was modified — must be verbatim source payload"
-    )
+    row = inserted_rows[0]
+    # L1: raw_data must NOT be written to staging (dead weight, never read by refine)
+    assert "raw_data" not in row, f"raw_data must not be persisted for source '{source}'"
+    # the columns refine actually needs are still there
+    assert row["source"] == source
+    assert row["external_id"] == str(payload.get("id") or payload.get("job_id") or "")
+    assert "content_hash" in row
