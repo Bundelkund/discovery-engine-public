@@ -1,22 +1,27 @@
 -- Ranked keyword search RPC for GET /jobs — closes recall blocker E1 + phrase bug E2.
--- Date: 2026-06-08
+-- Date: 2026-06-08 · Perf restructure: 2026-07-01
 -- SAFETY: additive-only (CREATE OR REPLACE FUNCTION). No table/column changes.
 --
--- PERF (why rank on title only): the filter (title @@ q OR description @@ q) uses the
--- two expression GIN indexes -> fast BitmapOr (~250ms). Ranking is the cost: an early
--- cut ranked ts_rank(to_tsvector('simple', title||description), q), which re-tokenizes
--- ~5k full DESCRIPTIONS per query -> 7-9s warm, near the 8s statement_timeout. Ranking
--- on title ONLY (ts_rank(to_tsvector('simple', title), q)) tokenizes only short titles
--- -> sub-second, and is MORE relevant: florians terms are job titles ('Agile Coach',
--- 'Scrum Master'), so a title hit outranks an incidental description mention. Rows that
--- match only in description rank rank=0 and fall back to scraped_at DESC — still
--- returned (recall unchanged), just lower. No stored tsvector column needed (a GENERATED
--- STORED column would rewrite the 10.5k-row table, exceeding the MCP apply timeout).
+-- PERF (two-phase, why the wide-window backfill used to 500): the filter
+-- (title @@ q OR description @@ q) uses the two expression GIN indexes -> fast BitmapOr.
+-- The cost was the SORT: a broad 40-term OR over jobs_v2 (60k+) matches ~39k rows
+-- (mostly via DESCRIPTION — single words like 'coach'/'innovation'/'transformation'
+-- appear in tens of thousands of descriptions), and ORDER BY ts_rank(title, q) then
+-- re-tokenizes to_tsvector(title) for ALL ~39k rows before LIMIT -> ~74s, far past the
+-- statement_timeout. florians terms ARE job titles, so only TITLE hits (~1.4k) are
+-- relevant; description-only hits rank 0 and are pure tie-break-by-recency tail.
+-- FIX: rank ONLY the title-hit set (small), and append description-only hits UNRANKED,
+-- ordered by recency and capped to what the page can consume ($limit+$offset). The
+-- description branch excludes title hits via an ANTI-JOIN against title_hits (~1.4k ids,
+-- hash probe) — NOT `NOT (to_tsvector(title) @@ q)`, which re-tokenized 40k titles and
+-- alone cost 3s. Same rows, same order (title hits rank>0 always precede rank-0 desc
+-- hits), same total_count (full title-OR-desc match set) — just ~74s -> ~0.3s. Measured
+-- 2026-07-01 prod: 40 terms, max_age_days=30, limit=500 -> 0.32s (offset 0).
 --
 -- Problem (tenant live-test 2026-06-08): /jobs keyword search returned an UNRANKED
--- slice. The OR-match over 4 multi-word terms (incl. low-selectivity 'new work' ->
+-- slice. The OR-match over multi-word terms (incl. low-selectivity 'new work' ->
 -- 'new' & 'work') matched thousands of rows; without ORDER BY ts_rank the selective
--- jobs (florians 86 Agile-Coach) sorted past position 500 -> never reached the scorer
+-- jobs (florians Agile-Coach roles) sorted past position 500 -> never reached the scorer
 -- (matches_upserted=0 even at limit=500). PostgREST `.order()` cannot ORDER BY a
 -- ts_rank() expression, so the ranked path lives here as an RPC.
 --
@@ -34,7 +39,8 @@
 -- PostgREST path when a distance filter is combined with keywords).
 --
 -- Returns one row per match: (result jsonb = full job row, total_count bigint =
--- pre-pagination COUNT(*) OVER()). Caller reads total from any row (0 rows -> 0).
+-- pre-pagination count over the full title-OR-desc match set). Caller reads total from
+-- any row (0 rows -> 0).
 
 CREATE OR REPLACE FUNCTION public.search_jobs_ranked(
   p_table              text,
@@ -84,28 +90,90 @@ BEGIN
     RETURN;
   END IF;
 
+  -- Two-phase ranked page (see PERF header). The shared non-FTS filter block is repeated
+  -- verbatim across title_hits / desc_hits / cnt so all three see the exact same rows;
+  -- only the FTS predicate differs. %1$I = p_table (allowlisted above). $1 = v_tsq.
   RETURN QUERY EXECUTE format($q$
+    WITH title_hits AS (
+      SELECT t.id,
+             ts_rank(to_tsvector('simple', t.title), $1) AS r,
+             t.scraped_at
+      FROM %1$I AS t
+      WHERE to_tsvector('simple', t.title) @@ $1
+        AND ($2 IS NULL OR NOT EXISTS (
+              SELECT 1 FROM unnest($2) AS n
+              WHERE t.title ILIKE '%%' || n || '%%'
+                 OR t.description ILIKE '%%' || n || '%%'))
+        AND ($3 IS NULL OR t.location ILIKE '%%' || $3 || '%%')
+        AND ($4 IS NULL OR t.scraped_at >= now() - ($4 || ' days')::interval)
+        AND ($5 IS NULL OR t.company_domain IS NULL OR NOT (t.company_domain = ANY($5)))
+        AND ($6 IS NULL OR t.source = ANY($6))
+        AND ($7 IS NULL OR t.company_domain = ANY($7))
+        AND ($8 IS NULL OR EXISTS (
+              SELECT 1 FROM unnest($8) AS s WHERE t.title ILIKE '%%' || s || '%%'))
+        AND ($9 IS NULL OR (t.salary_min IS NOT NULL AND t.salary_min >= $9))
+        AND ($10 IS NULL OR (t.salary_max IS NOT NULL AND t.salary_max <= $10))
+    ),
+    desc_hits AS (
+      SELECT t.id,
+             0::real AS r,
+             t.scraped_at
+      FROM %1$I AS t
+      WHERE to_tsvector('simple', t.description) @@ $1
+        -- Exclude rows already in title_hits via anti-join against its ~1.4k ids
+        -- (hash probe), NOT `NOT (to_tsvector(title) @@ $1)` which re-tokenized the
+        -- title of every one of the ~40k description hits -> was 3s of the 4.8s total.
+        AND NOT EXISTS (SELECT 1 FROM title_hits th WHERE th.id = t.id)
+        AND ($2 IS NULL OR NOT EXISTS (
+              SELECT 1 FROM unnest($2) AS n
+              WHERE t.title ILIKE '%%' || n || '%%'
+                 OR t.description ILIKE '%%' || n || '%%'))
+        AND ($3 IS NULL OR t.location ILIKE '%%' || $3 || '%%')
+        AND ($4 IS NULL OR t.scraped_at >= now() - ($4 || ' days')::interval)
+        AND ($5 IS NULL OR t.company_domain IS NULL OR NOT (t.company_domain = ANY($5)))
+        AND ($6 IS NULL OR t.source = ANY($6))
+        AND ($7 IS NULL OR t.company_domain = ANY($7))
+        AND ($8 IS NULL OR EXISTS (
+              SELECT 1 FROM unnest($8) AS s WHERE t.title ILIKE '%%' || s || '%%'))
+        AND ($9 IS NULL OR (t.salary_min IS NOT NULL AND t.salary_min >= $9))
+        AND ($10 IS NULL OR (t.salary_max IS NOT NULL AND t.salary_max <= $10))
+      -- Only the newest ($offset+$limit) desc-only rows can surface on this page; the
+      -- rest never reach the LIMIT window. Capping here is what keeps the sort cheap.
+      ORDER BY t.scraped_at DESC
+      LIMIT (COALESCE($11, 50) + COALESCE($12, 0))
+    ),
+    cnt AS (
+      -- Full pre-pagination count over the SAME match set the original used
+      -- (title OR desc, all filters). Cheap: bare GIN bitmap count, no ranking.
+      SELECT count(*) AS total FROM %1$I AS t
+      WHERE (to_tsvector('simple', t.title) @@ $1
+             OR to_tsvector('simple', t.description) @@ $1)
+        AND ($2 IS NULL OR NOT EXISTS (
+              SELECT 1 FROM unnest($2) AS n
+              WHERE t.title ILIKE '%%' || n || '%%'
+                 OR t.description ILIKE '%%' || n || '%%'))
+        AND ($3 IS NULL OR t.location ILIKE '%%' || $3 || '%%')
+        AND ($4 IS NULL OR t.scraped_at >= now() - ($4 || ' days')::interval)
+        AND ($5 IS NULL OR t.company_domain IS NULL OR NOT (t.company_domain = ANY($5)))
+        AND ($6 IS NULL OR t.source = ANY($6))
+        AND ($7 IS NULL OR t.company_domain = ANY($7))
+        AND ($8 IS NULL OR EXISTS (
+              SELECT 1 FROM unnest($8) AS s WHERE t.title ILIKE '%%' || s || '%%'))
+        AND ($9 IS NULL OR (t.salary_min IS NOT NULL AND t.salary_min >= $9))
+        AND ($10 IS NULL OR (t.salary_max IS NOT NULL AND t.salary_max <= $10))
+    ),
+    page AS (
+      SELECT id, r, scraped_at FROM title_hits
+      UNION ALL
+      SELECT id, r, scraped_at FROM desc_hits
+      ORDER BY r DESC, scraped_at DESC
+      LIMIT $11 OFFSET $12
+    )
     SELECT to_jsonb(t.*) AS result,
-           count(*) OVER() AS total_count
-    FROM %I AS t
-    WHERE (to_tsvector('simple', t.title) @@ $1
-           OR to_tsvector('simple', t.description) @@ $1)
-      AND ($2 IS NULL OR NOT EXISTS (
-            SELECT 1 FROM unnest($2) AS n
-            WHERE t.title ILIKE '%%' || n || '%%'
-               OR t.description ILIKE '%%' || n || '%%'))
-      AND ($3 IS NULL OR t.location ILIKE '%%' || $3 || '%%')
-      AND ($4 IS NULL OR t.scraped_at >= now() - ($4 || ' days')::interval)
-      AND ($5 IS NULL OR t.company_domain IS NULL OR NOT (t.company_domain = ANY($5)))
-      AND ($6 IS NULL OR t.source = ANY($6))
-      AND ($7 IS NULL OR t.company_domain = ANY($7))
-      AND ($8 IS NULL OR EXISTS (
-            SELECT 1 FROM unnest($8) AS s WHERE t.title ILIKE '%%' || s || '%%'))
-      AND ($9 IS NULL OR (t.salary_min IS NOT NULL AND t.salary_min >= $9))
-      AND ($10 IS NULL OR (t.salary_max IS NOT NULL AND t.salary_max <= $10))
-    ORDER BY ts_rank(to_tsvector('simple', t.title), $1) DESC,
-             t.scraped_at DESC
-    LIMIT $11 OFFSET $12
+           (SELECT total FROM cnt) AS total_count
+    FROM page AS p
+    JOIN %1$I AS t ON t.id = p.id
+    ORDER BY p.r DESC, p.scraped_at DESC
   $q$, p_table)
   USING v_tsq, p_keywords_negative, p_location, p_max_age_days,
         p_exclude_domain, p_source, p_company_domain, p_seniority_terms,
@@ -114,9 +182,10 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.search_jobs_ranked IS
-  'Ranked keyword search for GET /jobs (E1/E2 fix, 2026-06-08). ORDER BY ts_rank DESC '
-  'so selective terms outrank high-frequency token floods (new/work/senior). Builds '
-  'tsquery server-side (websearch_to_tsquery, phrase-aware). p_table allowlisted to '
-  'jobs|jobs_v2. Filter parity with JobRepository.query() except max_distance_km '
-  '(caller falls back to PostgREST when distance+keywords combine). Returns '
-  '(result jsonb, total_count bigint = COUNT(*) OVER()).';
+  'Ranked keyword search for GET /jobs (E1/E2 fix 2026-06-08; two-phase perf restructure '
+  '2026-07-01). Ranks only TITLE hits (small set), appends description-only hits unranked '
+  'by recency (capped to offset+limit) -> wide-window backlog query 74s->4s. Same rows, '
+  'order, and total_count (full title-OR-desc match count) as the pre-restructure version. '
+  'Builds tsquery server-side (websearch_to_tsquery, phrase-aware). p_table allowlisted to '
+  'jobs|jobs_v2. Filter parity with JobRepository.query() except max_distance_km. '
+  'Returns (result jsonb, total_count bigint).';
