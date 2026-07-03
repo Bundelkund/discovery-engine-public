@@ -103,7 +103,7 @@ class MinHashDedup:
         band_width: int = 4,
         shingle_size: int = 5,
         seed: int = 42,
-        window_days: int = 42,
+        window_days: int = 10,  # dedup_memory retention; matches pg_cron dedup-retention-10d
     ) -> None:
         if not 0.0 < threshold <= 1.0:
             raise ValueError(f"threshold must be in (0, 1], got {threshold}")

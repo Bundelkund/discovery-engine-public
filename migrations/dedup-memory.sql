@@ -9,7 +9,8 @@
 -- Design: store each band hash produced by the MinHash banding technique.
 -- MinHash with num_perm=128 and band_width=4 → 32 bands per document.
 -- A pair is near-duplicate when ANY band_hash matches (same as LSH bucket hit).
--- Retention window (default 42 days) configured in config/data-quality.yaml.
+-- Retention window (10 days) configured in config/data-quality.yaml dedup.window_days,
+-- enforced by the Refine purge_old() pass and pg_cron dedup-retention-10d (03:12 UTC).
 
 CREATE TABLE IF NOT EXISTS public.dedup_memory (
   id           uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -47,7 +48,8 @@ COMMENT ON TABLE public.dedup_memory IS
   'Persistent MinHash LSH band index for near-duplicate detection. '
   'One row per (document, band). Near-dup = any band_hash collision within retention window. '
   'Replaces in-memory MinHashLSH (self._lsh) — survives restarts, consistent across parallel runs. '
-  'Retention window (default 42 days) in config/data-quality.yaml dedup.window_days. '
+  'Retention window (10 days) in config/data-quality.yaml dedup.window_days, enforced '
+  'by both the Refine purge_old() pass and pg_cron job dedup-retention-10d (03:12 UTC). '
   'Purge pass: DELETE FROM dedup_memory WHERE seen_at < now() - interval.';
 COMMENT ON COLUMN public.dedup_memory.band_hash IS
   'Format: "band_{n}:{hex_digest}" — band index n (0..31) + SHA hex of that band''s shingle hashes.';

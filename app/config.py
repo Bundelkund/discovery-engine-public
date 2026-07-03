@@ -129,7 +129,7 @@ class MinHashConfig(BaseModel):
 
 
 class DedupConfig(BaseModel):
-    window_days: int = 42  # retention window for dedup_memory rows
+    window_days: int = 10  # dedup_memory retention; matches pg_cron dedup-retention-10d (see data-quality.yaml)
 
 
 class RulesConfig(BaseModel):

@@ -5,7 +5,12 @@ minhash:
   band_width: 4    # bands = num_perm / band_width = 32; tune alongside threshold
 
 dedup:
-  window_days: 42  # retention window for dedup_memory table; entries older than this are purged
+  # Single source of truth for the dedup_memory retention window (days).
+  # 10d matches the deployed pg_cron 'dedup-retention-10d' (03:12 UTC), which is the
+  # binding purge and keeps the table ~112 MB under the 500 MB cap. The Refine pass's
+  # own purge_old() reads this value, so both mechanisms now agree on 10d.
+  # (Was 42d in config while the cron already deleted at 10d — config drift resolved.)
+  window_days: 10
 
 rules:
   flag:
