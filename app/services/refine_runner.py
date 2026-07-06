@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
+from app.repositories.refine_runs import RefineRunRepository
 from app.services.refine_pipeline import RefinePipeline
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,22 @@ async def drain(limit: int = 200, max_passes: int = 100) -> dict:
         "fetched": 0, "refined": 0, "rejected": 0, "duplicate": 0,
         "errors": 0, "passes": 0,
     }
+
+    # Flow telemetry (P1 flow diagnostics): snapshot WIP before the cycle, write
+    # one refine_runs row after it. Best-effort throughout — metrics are
+    # observability, not critical path, so a telemetry failure must never block
+    # or fail the drain (spec: .specs/p1-flow-diagnostics.md).
+    started_at = datetime.now(timezone.utc)
+    refine_runs_repo: RefineRunRepository | None = None
+    wip_before = 0
+    oldest_new_age = 0
+    try:
+        refine_runs_repo = RefineRunRepository(get_supabase())
+        wip_before = await refine_runs_repo.get_wip_count()
+        oldest_new_age = await refine_runs_repo.get_oldest_new_age_seconds()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("refine_run_pre_stats_failed", extra={"error": str(exc)})
+
     try:
         pipeline = RefinePipeline(get_supabase())
         for _ in range(max_passes):
@@ -78,6 +96,31 @@ async def drain(limit: int = 200, max_passes: int = 100) -> dict:
         logger.error("refine_drain_failed", extra={"error": str(exc)})
     finally:
         _refine_running = False
+
+    # Persist this cycle's telemetry (best-effort: log + continue on failure).
+    if refine_runs_repo is not None:
+        try:
+            finished_at = datetime.now(timezone.utc)
+            wip_after = await refine_runs_repo.get_wip_count()
+            stats = {
+                "fetched": totals["fetched"],
+                "refined": totals["refined"],
+                "rejected": totals["rejected"],
+                "duplicate": totals["duplicate"],
+                "errors": totals.get("errors", 0),
+                "passes": totals.get("passes", 0),
+                "wip_before": wip_before,
+                "wip_after": wip_after,
+                "oldest_new_age_seconds": oldest_new_age,
+            }
+            await refine_runs_repo.insert(
+                started_at=started_at,
+                finished_at=finished_at,
+                stats=stats,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("refine_run_record_failed", extra={"error": str(exc)})
+            # Don't block drain; metric is observability, not critical path.
 
     logger.info("refine_drain_complete", extra=totals)
     return totals

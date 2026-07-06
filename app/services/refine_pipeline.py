@@ -193,30 +193,10 @@ class RefinePipeline:
 
         Returns ``{fetched, refined, rejected, duplicate, errors}``. Every fetched
         row is accounted for: refined + rejected + duplicate == fetched.
+
+        Retention (dedup_memory, raw_jobs, jobs_v2) is owned by pg_cron (nightly).
+        Removed inline purges per AUDIT-P1-02 to eliminate wasted DELETE scans.
         """
-        # Retention: drop dedup_memory rows older than the window so the table
-        # stays bounded. Best-effort — a purge failure must not block the pass.
-        # (Read-path correctness is already window-filtered in is_near_duplicate.)
-        try:
-            purged = await asyncio.to_thread(self.minhash.purge_old)
-            if purged:
-                logger.info("refine_dedup_purged", extra={"deleted": purged})
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("refine_dedup_purge_failed", extra={"error": str(exc)})
-
-        # Retention: drop terminal (refined/rejected/duplicate) raw_jobs past the
-        # window so the append-only inbox stays bounded. The C5 unique index stops
-        # re-scrape dupes; this clears aged *processed* rows. Best-effort, mirrors
-        # the dedup_memory purge above — a failure must not block the pass.
-        try:
-            res = await asyncio.to_thread(
-                lambda: self.supabase.rpc("purge_raw_jobs").execute()
-            )
-            if res.data:
-                logger.info("refine_raw_jobs_purged", extra={"deleted": res.data})
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("refine_raw_jobs_purge_failed", extra={"error": str(exc)})
-
         rows = await self.raw_repo.fetch_new(limit=limit)
         summary = {
             "fetched": len(rows),

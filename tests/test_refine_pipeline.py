@@ -199,16 +199,21 @@ async def test_minhash_add_only_for_refined_rows():
     assert summary["refined"] == 1
 
 
-# --- C5 retention: every run purges aged terminal raw_jobs from the inbox ---
+# --- AUDIT-P1-02: retention is owned by pg_cron, NOT the refine hot loop ---
 
 
 @pytest.mark.asyncio
-async def test_run_purges_raw_jobs_inbox():
-    """Each run() calls the purge_raw_jobs() RPC so the append-only inbox stays
-    bounded (C5). Best-effort: wrapped so a purge failure never blocks the pass."""
+async def test_run_has_no_inline_purges():
+    """run() must NOT purge inline (no purge_raw_jobs RPC, no dedup purge_old).
+
+    Retention (dedup_memory, raw_jobs, jobs_v2) moved to nightly pg_cron jobs
+    per AUDIT-P1-02 — inline purges were wasted DELETE scans on every pass."""
     p = _pipeline([_row("a")])
     await p.run()
-    p.supabase.rpc.assert_any_call("purge_raw_jobs")
+    assert not any(
+        c.args and c.args[0] == "purge_raw_jobs" for c in p.supabase.rpc.call_args_list
+    ), "hot loop must not call purge_raw_jobs"
+    p.minhash.purge_old.assert_not_called()
 
 
 # --- #5: a classify failure on one row rejects it and the pass continues ---
