@@ -5,6 +5,20 @@ from app.models.job import NormalizedJob
 
 logger = logging.getLogger(__name__)
 
+# Aggregators (adzuna) cut raw titles at exactly 64 chars ("…Asset Managemen").
+# len(title) == 64 is therefore the truncation SIGNATURE, and a 64-char raw-title
+# prefix is a high-precision identity for long titles. Titles shorter than 64
+# never probe (a short prefix would match unrelated longer titles); titles LONGER
+# than 64 are provably untruncated and only probe when they carry no usable
+# company (otherwise 50 per-city "…- 1KOMMA5° <Stadt>" postings, identical up to
+# char 64, would merge — observed on the shelf).
+_TITLE_TRUNC = 64
+
+
+def _escape_like(s: str) -> str:
+    """Escape LIKE/ILIKE pattern metacharacters in a literal prefix."""
+    return s.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+
 
 class DeduplicationService:
     def __init__(self, supabase_client, jobs_table: str | None = None):
@@ -33,7 +47,8 @@ class DeduplicationService:
     ) -> tuple[list[NormalizedJob], int, set[int]]:
         """Filter out duplicate jobs using batch queries.
 
-        3-tier dedup: external_id -> URL -> content_hash.
+        Tiered dedup: external_id -> URL -> content_hash -> title-prefix probe
+        (company-less jobs only) -> intra-batch collapse.
 
         Returns:
             (kept_jobs, dup_count, duplicate_indices) where
@@ -109,6 +124,80 @@ class DeduplicationService:
                         duplicate_indices.add(idx)
             except Exception as e:
                 logger.error("batch_dedup_hash_failed: %s", e)
+
+        # Tier 3b: COMPARISON-based rescue for what a per-row content_hash cannot
+        # express (dedup-company-noise-escape):
+        #   (a) company-less jobs — adzuna's "Bewerbung als" apply-label
+        #       normalises to an empty company, so their hash (stem|) can NEVER
+        #       match the clean-company sibling (stem|capco) on the shelf; by the
+        #       time the garbage variant re-arrives (re-scrape weeks later, new
+        #       ad id + url) the MinHash memory has forgotten the sibling.
+        #   (b) truncation suspects — len(title) == 64 exactly (the aggregator
+        #       cut signature): the truncated variant's hash never matches the
+        #       full variant's.
+        # Both probe the shelf by the first 64 raw title chars. 64 identical
+        # leading chars is a high-precision identity, and for a title that was
+        # CUT at 64 the information beyond does not exist at the source anyway.
+        try:
+            # Lazy import — refine_pipeline imports this module at load time.
+            from app.services.refine_pipeline import _norm_company
+
+            for i, job in enumerate(jobs):
+                if i in duplicate_indices:
+                    continue
+                title = job.title or ""
+                if len(title) < _TITLE_TRUNC:
+                    continue
+                companyless = not _norm_company(job.company or "")
+                truncated = len(title) == _TITLE_TRUNC
+                if not (companyless or truncated):
+                    continue  # long untruncated title + usable company → hash tiers
+                pattern = _escape_like(title[:_TITLE_TRUNC]) + "%"
+                table = self.jobs_table
+                result = await asyncio.to_thread(
+                    lambda p=pattern, t=table: self.client.table(t)
+                    .select("id")
+                    .ilike("title", p)
+                    .limit(1)
+                    .execute()
+                )
+                if result.data:
+                    duplicate_indices.add(i)
+                    logger.info(
+                        "dedup_title_prefix_probe_hit",
+                        extra={"title": title[:80], "table": table},
+                    )
+
+            # Intra-batch truncation collapse: the truncated and the full variant
+            # of the SAME posting often arrive in ONE batch (observed twice for
+            # the Capco posting: 2026-06-19 and 2026-07-03) — nothing is on the
+            # shelf yet and their hashes differ, so both DB tiers and Tier 4 miss
+            # them. Group survivors by the 64-char raw prefix; within a group keep
+            # the longest title and drop members that are truncation suspects or
+            # company-less AND company-compatible with the keeper. Untruncated
+            # real-company members (e.g. per-city postings sharing a long prefix)
+            # are never dropped.
+            prefix_groups: dict[str, list[int]] = {}
+            for i, job in enumerate(jobs):
+                if i in duplicate_indices:
+                    continue
+                title = job.title or ""
+                if len(title) >= _TITLE_TRUNC:
+                    prefix_groups.setdefault(title[:_TITLE_TRUNC], []).append(i)
+            for idxs in prefix_groups.values():
+                if len(idxs) < 2:
+                    continue
+                keeper = max(idxs, key=lambda i: (len(jobs[i].title or ""), -i))
+                keeper_comp = _norm_company(jobs[keeper].company or "")
+                for i in idxs:
+                    if i == keeper:
+                        continue
+                    comp = _norm_company(jobs[i].company or "")
+                    eligible = len(jobs[i].title or "") == _TITLE_TRUNC or not comp
+                    if eligible and (not comp or comp == keeper_comp):
+                        duplicate_indices.add(i)
+        except Exception as e:
+            logger.error("batch_dedup_title_probe_failed: %s", e)
 
         # Tier 4: INTRA-batch collapse. The DB tiers above only flag a job as a
         # duplicate when its key already exists ON THE SHELF — so N jobs that share

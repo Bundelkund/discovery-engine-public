@@ -94,6 +94,68 @@ def test_content_hash_ignores_url_and_gender_suffix():
     assert _content_hash("AI Coach", "Foo") != _content_hash("Data Engineer", "Foo")
 
 
+# --- dedup-company-noise-escape: adzuna company-echo + garbage-company label ---
+
+# The four REAL jobs_v2 rows of ONE Capco posting (prod, 2026-07-06). Adzuna
+# shipped it as four feed variants: title truncated at 64 raw chars or not,
+# company echoed into the title or not, company field carrying the apply-page
+# label "Bewerbung als" or the real employer.
+_CAPCO_FULL = "(Senior) Consultant* / Transformation Manager* – Asset Management"
+_CAPCO_CUT = "(Senior) Consultant* / Transformation Manager* – Asset Managemen"
+
+
+def test_content_hash_strips_company_echo_from_title():
+    """Some adzuna feed variants render 'Title - Capco', others 'Title' + company
+    field. The echo must not split the hash of the SAME posting."""
+    from app.services.refine_pipeline import _content_hash
+
+    assert _content_hash(_CAPCO_FULL + " - Capco", "Capco") == _content_hash(
+        _CAPCO_FULL, "Capco"
+    )
+    # legal-form variant of the company still strips its echo
+    assert _content_hash("AI Coach - amberra", "amberra GmbH") == _content_hash(
+        "AI Coach", "amberra"
+    )
+
+
+def test_content_hash_treats_apply_label_company_as_empty():
+    """'Bewerbung als …' in the company field is scrape garbage, not an employer."""
+    from app.services.refine_pipeline import _norm_company
+
+    assert _norm_company("Bewerbung als") == ""
+    assert _norm_company("Bewerbung als Senior Transformation Manager") == ""
+    assert _norm_company("Capco") == "capco"
+
+
+def test_content_hash_no_overmerge():
+    """Gegen-Tests: genuinely different jobs must NOT collapse at hash level."""
+    from app.services.refine_pipeline import _content_hash
+
+    # same title, different companies → distinct (company stays in the hash)
+    assert _content_hash("Werkstudent HR", "BMW") != _content_hash(
+        "Werkstudent HR", "Siemens"
+    )
+    # REGRESSION GUARD (shelf, 2026-07): 50 per-city postings of one company
+    # share their first ~60 chars — long same-company titles diverging only in
+    # the tail must stay distinct. (This is why truncation tolerance is NOT a
+    # hash cap but a comparison in DeduplicationService keyed on the exact
+    # 64-char truncation signature.)
+    assert _content_hash(
+        "Sales Manager (m/w/d) für intelligente Energiesysteme - 1KOMMA5° Hamburg",
+        "1komma5grad",
+    ) != _content_hash(
+        "Sales Manager (m/w/d) für intelligente Energiesysteme - 1KOMMA5° Bamberg",
+        "1komma5grad",
+    )
+    # garbage company does NOT unify with a real company at hash level —
+    # that bridge is comparison-based (dedup Tier 3b / backfill migration),
+    # because a per-row hash unifying ''<->'capco' would require dropping the
+    # company for ALL rows (cross-company over-merge).
+    assert _content_hash(_CAPCO_CUT, "Bewerbung als") != _content_hash(
+        _CAPCO_CUT, "Capco"
+    )
+
+
 # --- agnostic: a job that matched no old profile signal is now REFINED ---
 
 

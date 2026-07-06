@@ -60,12 +60,18 @@ DUPLICATE = "duplicate"
 # Legal-form tokens stripped from company names before hashing: the SAME employer
 # appears as "amberra GmbH" on one board and "amberra" on another, which would
 # otherwise split the canonical hash. Keep this set in lock-step with the SQL
-# backfill migration (migrations/…cross_source_dedup) — the Python ingest hash and
-# the migrated hash MUST be byte-identical or re-ingests won't match the shelf.
+# backfill migrations (migrations/cross-source-dedup-content-hash.sql,
+# migrations/dedup-company-noise-escape.sql) — the Python ingest hash and the
+# migrated hash MUST be byte-identical or re-ingests won't match the shelf.
 _LEGAL_FORMS = frozenset(
     {"gmbh", "mbh", "ag", "se", "kg", "kgaa", "ug", "ohg", "gbr",
      "co", "ev", "ltd", "llc", "inc", "plc", "holding"}
 )
+
+# Adzuna's apply-page label leaks into company.display_name ("Bewerbung als",
+# "Bewerbung als Senior Transformation Manager"). That is a CTA, never an
+# employer — treat it as an empty company for identity purposes.
+_COMPANY_GARBAGE_PREFIX = "bewerbung als"
 
 
 def _norm_hash_field(s: str) -> str:
@@ -82,12 +88,16 @@ def _norm_hash_field(s: str) -> str:
 
 
 def _norm_company(s: str) -> str:
-    """Like _norm_hash_field but also strip legal-form tokens (GmbH/AG/…)."""
-    return " ".join(t for t in _norm_hash_field(s).split() if t not in _LEGAL_FORMS)
+    """Like _norm_hash_field but drop apply-page garbage labels entirely and
+    strip legal-form tokens (GmbH/AG/…)."""
+    ns = _norm_hash_field(s)
+    if ns == _COMPANY_GARBAGE_PREFIX or ns.startswith(_COMPANY_GARBAGE_PREFIX + " "):
+        return ""
+    return " ".join(t for t in ns.split() if t not in _LEGAL_FORMS)
 
 
 def _content_hash(title: str, company: str) -> str:
-    """sha256(norm(title)|norm_company(company))[:16] — SOURCE-INDEPENDENT identity.
+    """sha256(stem(title,company)|norm_company(company))[:16] — SOURCE-INDEPENDENT identity.
 
     url is deliberately OMITTED: the same posting scraped from N job boards
     (adzuna/linkedin/indeed/personio/…) carries N different urls but the same
@@ -97,9 +107,26 @@ def _content_hash(title: str, company: str) -> str:
     "Wedding, Berlin", "Berlin, Berlin, Germany" across boards — too noisy to be a
     stable identity (it splits the hash instead of collapsing it). Company legal
     forms are stripped so "amberra GmbH" == "amberra".
+
+    Title stem (dedup-company-noise-escape): a trailing company echo is removed —
+    some adzuna feed variants render "Title - Capco" while others render "Title"
+    plus the company field, which split the hash for the SAME posting.
+
+    Deliberately NOT in the hash: trailing-truncation tolerance. Aggregators cut
+    long titles mid-word ("…Asset Managemen", adzuna cuts at 64 raw chars), but a
+    per-row hash can only absorb that by capping every stem at a fixed prefix —
+    which over-merges genuinely different postings whose titles diverge beyond
+    the cap (observed on the shelf: 50 per-city "…- 1KOMMA5° <Stadt>" postings
+    differ only after char ~48). Truncation is therefore handled as a COMPARISON
+    in DeduplicationService (Tier 3b title-prefix probe + intra-batch collapse)
+    and in the backfill migration, keyed on the exact 64-char truncation signature.
+    MUST stay byte-identical to migrations/dedup-company-noise-escape.sql.
     """
-    content = f"{_norm_hash_field(title)}|{_norm_company(company)}"
-    return hashlib.sha256(content.encode()).hexdigest()[:16]
+    c = _norm_company(company)
+    stem = _norm_hash_field(title)
+    if c and stem.endswith(" " + c):
+        stem = stem[: -(len(c) + 1)]
+    return hashlib.sha256(f"{stem}|{c}".encode()).hexdigest()[:16]
 
 
 def parse_raw(raw: RawJob | dict, default_source: str = "") -> NormalizedJob:
