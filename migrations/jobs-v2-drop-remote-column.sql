@@ -1,6 +1,7 @@
 -- Drop jobs_v2.remote — dead physical column (AUDIT-P0-02).
 --
--- ==== DRAFT — NOT APPLIED. Apply only after user approval. ====
+-- ==== APPLIED 2026-07-07 via apply_migration (drop_jobs_v2_remote_dead_column). ====
+-- (Was a draft gated on the WonderApply access-path check; confirmed safe 2026-07-07.)
 --
 -- WHY: jobs_v2 carried two remoteness families. is_remote / is_hybrid are the
 -- written source of truth (refine pipeline: app/data_quality/location.py ->
@@ -20,10 +21,12 @@
 --     direct jobs_v2 access; consumes only the Engine HTTP API. Covered.
 --   - tenant-mcp: raw pass-through of tenant-module /my/job. Covered.
 --   - apply skill: consumes /my/matches (no remote field at all). Unaffected.
---   - WonderApply: NOT locally auditable. Last verified 2026-06-09
---     (drop-jobs-v2-score-stage-1.sql): reads v1 `public.jobs` with explicit
---     column lists — NOT jobs_v2. MUST be re-confirmed before applying this
---     drop. v1 `public.jobs` is intentionally LEFT UNTOUCHED (frozen).
+--   - WonderApply (Bundelkund/wonderapply): CONFIRMED 2026-07-07 via GitHub audit.
+--     References jobs_v2 NOWHERE (only .table("jobs")=v1 + the DE /jobs API via
+--     clients/discovery_engine.py). Reads `remote` from (a) the /jobs API JSON
+--     (list_jobs_with_user_data — the repoint fixed WA's list too) and (b) v1
+--     public.jobs.remote — neither is this physical column. v1 `public.jobs` is
+--     intentionally LEFT UNTOUCHED (frozen); WA's v1 decoupling tracked as WA-DE-10.
 --
 -- SAFETY: idempotent (IF EXISTS). No RPC created/changed -> no search_path /
 -- SECURITY INVOKER / GRANT surface (AUDIT-P1-06 n/a). No backfill needed:
