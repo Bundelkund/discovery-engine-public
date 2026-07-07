@@ -11,6 +11,12 @@ resolution:
   max_resolve: 100             # Cost ceiling per scrape run
   concurrency: 5               # Parallel origin fetches
   timeout_s: 20                # Per-request timeout
+  resolve_budget_s: 8          # AUDIT-P1-03: hard wall-clock cap for the WHOLE
+                               #   resolution step inside one refine pass. Slow
+                               #   origins can otherwise hold the pass (and its
+                               #   'refining' claim) for max_resolve/concurrency
+                               #   x timeout_s ≈ 400s. Partial fills are kept on
+                               #   budget exhaustion; unfilled rows refine thin.
   blocked_hosts:               # (B) Tracker/aggregator redirect hosts — click-trackers,
     - jobviewtrack.com         #   not posting origins. careerjet hands out only these;
                                #   server-side fetch -> careerjet anti-bot page. Skipped

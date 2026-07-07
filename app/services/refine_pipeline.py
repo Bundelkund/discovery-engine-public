@@ -18,6 +18,8 @@ Ordered steps (each independently testable, fixed order):
   4. dq-rules           RulesEngine.classify -> reject (when mode=='flag+reject') / flags
   5. location           LocationNormalizer.normalize -> location_normalized/lat/lon/remote
   6. gate+resolve       quality_gate (profile-free) -> DescriptionResolver backfill
+                        under a hard wall-clock budget (AUDIT-P1-03: slow origins
+                        must never hold the 'refining' claim hostage)
                         (NO scoring, NO enrich — engine is profile-agnostic; per-profile
                         scoring lives in the tenant module, enrichment is on-read)
   7. state-upsert        survivors -> ScoredJob -> JobRepository.upsert; mark 'refined'
@@ -59,6 +61,26 @@ logger = logging.getLogger(__name__)
 REFINED = "refined"
 REJECTED = "rejected"
 DUPLICATE = "duplicate"
+
+# AUDIT-P1-03: hard wall-clock budget for step 6b (description resolution).
+# The whole batch sits claimed 'refining' (AUDIT-P1-04) while the pass runs, and
+# the resolver is the only origin-dependent step — worst case without a budget
+# was ~400s per pass (max_resolve=100 / concurrency=5 x timeout_s=20) held
+# hostage by slow posting origins. 8s keeps the origin-dependent tail under the
+# p95<10s refine-latency target; a healthy batch (few thin rows, fast origins)
+# finishes in 1-3s and never hits it. Override per deploy via resolution.yaml
+# `resolve_budget_s`. On budget exhaustion, fetches that already completed keep
+# their fills (resolve_batch mutates job.description in place per task); the
+# rest are cancelled and those rows proceed thin — the same best-effort contract
+# as any single fetch failure. dedup-near is unaffected either way: step 3
+# decides on the THIN text before 6b runs.
+# debt: rows whose fetch the budget cancels stay thin forever ('refined' is
+# terminal; resolution never retries). Upgrade-trigger: if the
+# refine_resolution_budget_exhausted log fires on most passes or the shelf's
+# thin-description share grows visibly, move backfill OUT of the refine pass
+# into a separate scheduled drain that UPDATEs the shelf description for
+# already-refined thin rows (AUDIT-P1-03 Option B).
+_RESOLVE_BUDGET_SECONDS = 8.0
 
 
 # Legal-form tokens stripped from company names before hashing: the SAME employer
@@ -349,14 +371,28 @@ class RefinePipeline:
         survivors, survivor_ids = gated, gated_ids
 
         # 6b. DescriptionResolver — best-effort thin-description backfill (corpus value:
-        #     full text via the posting's redirect URL feeds dedup-near + /jobs ranking).
+        #     full text via the posting's redirect URL feeds /jobs ranking; dedup-near
+        #     already decided on the THIN text in step 3, bands are persisted from the
+        #     thin text in 7b — resolution changes neither). AUDIT-P1-03: hard
+        #     wall-clock budget so slow posting origins can never hold the pass (and
+        #     its 'refining' claim) hostage. Budget exhaustion is an EXPECTED cap,
+        #     not an error: partial fills are kept, unfilled rows proceed thin.
         if survivors:
             try:
                 res_cfg = load_resolution_config().get("resolution", {})
                 if res_cfg.get("enabled", True):
                     resolver = DescriptionResolver(res_cfg)
-                    filled = await resolver.resolve_batch(survivors)
-                    logger.info("refine_descriptions_resolved", extra={"filled": filled})
+                    budget = float(res_cfg.get("resolve_budget_s", _RESOLVE_BUDGET_SECONDS))
+                    try:
+                        filled = await asyncio.wait_for(
+                            resolver.resolve_batch(survivors), timeout=budget
+                        )
+                        logger.info("refine_descriptions_resolved", extra={"filled": filled})
+                    except asyncio.TimeoutError:
+                        logger.info(
+                            "refine_resolution_budget_exhausted",
+                            extra={"budget_s": budget, "survivors": len(survivors)},
+                        )
             except Exception as exc:  # noqa: BLE001
                 logger.error("refine_resolution_failed", extra={"error": str(exc)})
 

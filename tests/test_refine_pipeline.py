@@ -4,6 +4,10 @@ The engine is profile-agnostic — Step 6 has NO scoring and NO enrichment. A jo
 that survives parse/dedup/dq/quality-gate is refined and upserted to the shared
 shelf regardless of any user's profile (per-profile scoring lives in the tenant).
 """
+import asyncio
+import logging
+import time
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -300,3 +304,113 @@ async def test_classify_failure_isolated_per_row():
     assert marked["a"] == "rejected"
     assert marked["b"] == "refined"
     assert summary["errors"] >= 1
+
+
+# --- AUDIT-P1-03: description resolution is hard-bounded by a wall-clock budget ---
+
+_RESOLVED_HTML = (
+    "<html><body><p>"
+    + ("Full resolved posting text with many keywords. " * 15)
+    + "</p></body></html>"
+)
+
+
+class _FakeResp:
+    def __init__(self, text="", url=""):
+        self.text = text
+        self.url = url
+
+    def raise_for_status(self):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_resolution_budget_bounds_refine_and_keeps_partial_fills(
+    monkeypatch, caplog
+):
+    """THE AUDIT-P1-03 proof: a pathologically slow posting origin (sleeps 30s,
+    far past the budget) must NOT hold the pass hostage. Asserts, in one run:
+
+    1. Wall-clock bound: `run()` returns within budget + overhead — not the 30s
+       the slow origin wanted (pre-fix worst case ≈ 400s). At prod scale
+       (budget 8s + DB steps) this is the refine-latency p95<10s demonstration.
+    2. Partial fills kept: the fast origin's fill (completed before the cap)
+       reaches the shelf; the cancelled slow row is upserted thin.
+    3. No row dropped or stranded in 'refining': BOTH rows end terminal
+       ('refined') — a budget hit degrades corpus quality, never state integrity.
+    4. Benign logging: the cap logs refine_resolution_budget_exhausted at INFO,
+       never a hard refine_resolution_failed error.
+    """
+    import app.resolution.description_resolver as res_mod
+    import app.services.refine_pipeline as pipe_mod
+
+    budget = 0.5
+    monkeypatch.setattr(
+        pipe_mod,
+        "load_resolution_config",
+        lambda: {
+            "resolution": {
+                "enabled": True,
+                "min_description_chars": 200,
+                "resolve_budget_s": budget,
+            }
+        },
+    )
+
+    class SlowOriginClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None):
+            if "slow" in url:
+                await asyncio.sleep(30)  # pathological origin, way past budget
+            return _FakeResp(text=_RESOLVED_HTML, url=url)
+
+    monkeypatch.setattr(res_mod.httpx, "AsyncClient", SlowOriginClient)
+
+    rows = [
+        _row("fast", title="Coach A", url="https://acme.example.com/fast/1",
+             description="thin snippet"),
+        _row("slow", title="Coach B", url="https://acme.example.com/slow/2",
+             description="thin snippet"),
+    ]
+    p = _pipeline(rows)
+
+    captured = {}
+
+    async def capture_upsert(jobs):
+        captured.update({j.title: j for j in jobs})
+        return [True] * len(jobs)
+
+    p.job_repo.upsert = capture_upsert
+
+    with caplog.at_level(logging.INFO):
+        start = time.monotonic()
+        summary = await p.run()
+        elapsed = time.monotonic() - start
+
+    # (1) hard wall-clock bound
+    assert elapsed < budget + 2.0, (
+        f"refine blocked {elapsed:.1f}s — resolution budget not enforced"
+    )
+
+    # (2) partial fill kept; cancelled row proceeds thin
+    assert "Full resolved posting text" in captured["Coach A"].description
+    assert captured["Coach B"].description == "thin snippet"
+
+    # (3) both rows terminal — nothing dropped, nothing left 'refining'
+    marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
+    assert marked["fast"] == "refined"
+    assert marked["slow"] == "refined"
+    assert summary["refined"] == 2
+
+    # (4) budget cap is benign: INFO log, never the hard-failure error
+    messages = [r.getMessage() for r in caplog.records]
+    assert "refine_resolution_budget_exhausted" in messages
+    assert "refine_resolution_failed" not in messages
