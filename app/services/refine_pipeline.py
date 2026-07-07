@@ -4,9 +4,11 @@
 ``status='new'`` and stops. This pipeline drives each new row through an ordered
 set of steps and ends it in EXACTLY ONE terminal status:
 
-    new ──► refined      (survived every gate; upserted into the clean jobs shelf)
-        ├─► duplicate    (exact-dup of an existing job, or a near-dup of a peer)
-        └─► rejected     (DQ rules rejected it while reject-mode is active)
+    new ──► refining     (atomic batch claim via claim_refine_batch RPC, AUDIT-P1-04)
+            ├─► refined    (survived every gate; upserted into the clean jobs shelf)
+            ├─► duplicate  (exact-dup of an existing job, or a near-dup of a peer)
+            ├─► rejected   (DQ rules rejected it while reject-mode is active)
+            └─► new        (released for retry: upsert failed / stale-claim reclaim)
 
 Ordered steps (each independently testable, fixed order):
 
@@ -20,10 +22,12 @@ Ordered steps (each independently testable, fixed order):
                         scoring lives in the tenant module, enrichment is on-read)
   7. state-upsert        survivors -> ScoredJob -> JobRepository.upsert; mark 'refined'
 
-Idempotency: the input is read via ``RawJobRepository.fetch_new`` (status='new'
-only). Terminal rows are never re-read, so a re-run is a no-op over already-
-processed work. State-machine integrity: NO raw_job is silently dropped — every
-fetched row is ``mark_status``'d to one terminal value before the pass returns.
+Idempotency: the input is CLAIMED via ``RawJobRepository.fetch_new`` (atomic
+status='new' → 'refining' flip; concurrent drains get disjoint batches). Terminal
+rows are never re-read, so a re-run is a no-op over already-processed work.
+State-machine integrity: NO raw_job is silently dropped — every fetched row is
+``mark_status``'d to one terminal value (or released to 'new') before the pass
+returns.
 Per-row error isolation: a failure on one raw_job marks it 'rejected' and the
 pass continues.
 
@@ -407,15 +411,18 @@ class RefinePipeline:
                 logger.warning("refine_minhash_add_failed", extra={"id": rid, "error": str(exc)})
 
         # --- Commit terminal states. Any survivor still None means upsert failed;
-        #     leave it 'new' (omit mark_status) so the next run retries it. ---
+        #     RELEASE it back to 'new' so the next run retries it. (AUDIT-P1-04:
+        #     fetch_new now CLAIMS rows to status='refining' — merely omitting the
+        #     mark would strand the row invisible until the stale reclaim window.
+        #     If the release itself fails, the drain-start reclaim recovers it.) ---
         for rid, state in endstate.items():
-            if state is None:
-                continue
+            target = state if state is not None else "new"
             try:
-                await self.raw_repo.mark_status(rid, state)
-                summary[state] += 1
+                await self.raw_repo.mark_status(rid, target)
+                if state is not None:
+                    summary[state] += 1
             except Exception as exc:  # noqa: BLE001
-                logger.error("refine_mark_status_failed", extra={"id": rid, "state": state, "error": str(exc)})
+                logger.error("refine_mark_status_failed", extra={"id": rid, "state": target, "error": str(exc)})
                 summary["errors"] += 1
 
         logger.info("refine_pass_complete", extra=summary)

@@ -231,16 +231,17 @@ async def test_upsert_receives_location_and_flags():
 
 
 @pytest.mark.asyncio
-async def test_upsert_partial_failure_leaves_failed_row_new():
-    """When upsert reports row 'b' failed, only 'a' is marked refined; 'b' stays
-    'new' (no mark_status) so the next pass retries it — never silently refined."""
+async def test_upsert_partial_failure_releases_failed_row_to_new():
+    """When upsert reports row 'b' failed, only 'a' is marked refined; 'b' is
+    RELEASED back to 'new' so the next pass re-claims it — never silently refined.
+    (AUDIT-P1-04: rows arrive claimed as 'refining', so the release is explicit.)"""
     p = _pipeline([_row("a", title="Coach A"), _row("b", title="Coach B")])
     p.job_repo.upsert = AsyncMock(side_effect=lambda jobs: [True, False])
 
     summary = await p.run()
     marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
     assert marked.get("a") == "refined"
-    assert "b" not in marked  # failed row left 'new' for retry
+    assert marked.get("b") == "new"  # failed row released for retry
     assert summary["refined"] == 1
     assert summary["errors"] >= 1
 

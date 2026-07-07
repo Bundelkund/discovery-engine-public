@@ -54,21 +54,53 @@ async def test_record_start_returns_id():
 
 
 @pytest.mark.asyncio
-async def test_reclaim_stale_running_marks_failed():
-    """Startup reclaim closes orphaned 'running' rows (status→failed)."""
+async def test_record_start_returns_none_when_claim_lost():
+    """AUDIT-P1-04: a 23505 against the one-running-per-source unique index means
+    another worker/replica already scrapes this source — record_start maps it to
+    None (caller skips) instead of raising."""
     client = MagicMock()
-    client.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock(
-        data=[{"id": "a"}, {"id": "b"}]
+    client.table.return_value.insert.return_value.execute.side_effect = Exception(
+        '23505: duplicate key value violates unique constraint '
+        '"uq_scrape_runs_one_running_per_source"'
     )
 
-    n = await ScrapeRunRepository(client).reclaim_stale_running()
+    run_id = await ScrapeRunRepository(client).record_start("adzuna")
+
+    assert run_id is None
+
+
+@pytest.mark.asyncio
+async def test_record_start_propagates_non_conflict_errors():
+    """Only the claim conflict is swallowed; other DB errors keep raising."""
+    client = MagicMock()
+    client.table.return_value.insert.return_value.execute.side_effect = Exception(
+        "connection reset"
+    )
+
+    with pytest.raises(Exception, match="connection reset"):
+        await ScrapeRunRepository(client).record_start("adzuna")
+
+
+@pytest.mark.asyncio
+async def test_reclaim_stale_running_marks_failed():
+    """Time-based reclaim closes only 'running' rows STARTED before the cutoff
+    (crash orphans) — never a sibling worker's younger in-flight run."""
+    client = MagicMock()
+    chain = client.table.return_value.update.return_value.eq.return_value.lt.return_value
+    chain.execute.return_value = MagicMock(data=[{"id": "a"}, {"id": "b"}])
+
+    cutoff = datetime(2026, 7, 6, 3, 0, tzinfo=timezone.utc)
+    n = await ScrapeRunRepository(client).reclaim_stale_running(cutoff)
 
     assert n == 2
     update_arg = client.table.return_value.update.call_args[0][0]
     assert update_arg["status"] == "failed"
     assert "finished_at" in update_arg
-    # only 'running' rows are reclaimed
+    # only 'running' rows older than the cutoff are reclaimed
     client.table.return_value.update.return_value.eq.assert_called_once_with("status", "running")
+    client.table.return_value.update.return_value.eq.return_value.lt.assert_called_once_with(
+        "started_at", cutoff.isoformat()
+    )
 
 
 @pytest.mark.asyncio

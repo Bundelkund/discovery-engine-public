@@ -6,7 +6,7 @@ cron drifted out of config the whole pipeline silently stalled: scrapes kept
 filling raw_jobs while jobs_v2 went stale. The engine owns dedup + the clean
 shelf, so it must own the trigger too — that is what this module provides.
 
-Two entry points share ONE single-flight guard (``_refine_running``):
+Two entry points:
 
   * ``drain()``          — one drain cycle (loops passes until the inbox is empty
                            or a cap is hit). Used by the internal scheduler AND
@@ -14,14 +14,16 @@ Two entry points share ONE single-flight guard (``_refine_running``):
   * ``scheduler_loop()`` — periodic ``drain()`` on an asyncio interval, started
                            from the FastAPI lifespan.
 
-Single-flight matters: refine has no atomic row-claim (``fetch_new`` is a plain
-SELECT status='new'), so two concurrent drains would double-process the same
-batch — the second marking a just-refined job 'duplicate' against the first's
-freshly-added MinHash bands, and doubling resolver spend. The guard is set/read
-with NO ``await`` in between, so it is atomic w.r.t. the asyncio event loop.
-CAVEAT: it only covers a single process. With multiple uvicorn workers, promote
-to a Postgres advisory lock (pg_try_advisory_lock) or SELECT ... FOR UPDATE SKIP
-LOCKED on raw_jobs. Single-container Coolify deploy → one worker → this is enough.
+Concurrency (AUDIT-P1-04): the old in-process ``_refine_running`` single-flight
+bool is GONE. It only covered one process — ``--workers 2`` or a second replica
+would double-process the same batch (the second marking a just-refined job
+'duplicate' against the first's freshly-added MinHash bands, doubling resolver
+spend). Correctness now lives in the DB: ``fetch_new`` claims its batch through
+the ``claim_refine_batch`` RPC (``SELECT … FOR UPDATE SKIP LOCKED`` + ``UPDATE
+status='refining'`` in one transaction), so ANY number of concurrent drains —
+across workers, replicas, or the scheduler racing ``POST /refine`` — receive
+disjoint batches. Crash recovery: rows stuck 'refining' (a drain died mid-pass)
+are released back to 'new' by the time-based reclaim at every drain start.
 """
 from __future__ import annotations
 
@@ -29,38 +31,48 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from app.repositories.raw_jobs import RawJobRepository
 from app.repositories.refine_runs import RefineRunRepository
 from app.services.refine_pipeline import RefinePipeline
 
 logger = logging.getLogger(__name__)
 
-# Module-level single-flight guard shared by drain() (scheduler + endpoint).
-_refine_running = False
-
-
-def is_running() -> bool:
-    """True while a drain cycle is in flight (for tests / introspection)."""
-    return _refine_running
+# A 'refining' claim older than this is presumed orphaned by a crashed drain and
+# is released back to 'new' at the next drain start. Generously above one pass's
+# worst case (200 rows x HTTP description-resolution) so a slow-but-alive pass
+# never has its claim stolen by a sibling worker.
+# debt: hardcoded window; make a setting when a deploy needs passes >30 min
+# (upgrade-trigger: refine_batch_limit raised past ~1000).
+_CLAIM_STALE_SECONDS = 1800
 
 
 async def drain(limit: int = 200, max_passes: int = 100) -> dict:
     """Drain raw_jobs(status='new') through the refine pipeline until empty.
 
     Loops ``RefinePipeline.run(limit)`` until a pass fetches fewer than ``limit``
-    rows (inbox drained) or ``max_passes`` is reached (safety cap). Single-flight:
-    a no-op returning ``{"skipped": True}`` if another drain is already running.
+    rows (inbox drained) or ``max_passes`` is reached (safety cap). Safe to run
+    concurrently (scheduler vs POST /refine, multiple workers/replicas): each
+    pass CLAIMS its batch atomically in the DB, so parallel drains work disjoint
+    rows instead of double-processing.
 
     Returns aggregate terminal-state counts across all passes this cycle.
     """
-    global _refine_running
-    if _refine_running:
-        logger.info("refine_skip_already_running", extra={"limit": limit})
-        return {"skipped": True}
-    _refine_running = True
-
     # Fresh client per cycle (mirrors the old endpoint worker); created lazily so
     # importing this module never touches Supabase.
     from app.dependencies import get_supabase
+
+    # Crash recovery FIRST: release claims orphaned by a previous drain that died
+    # mid-pass (redeploy/crash), so those rows re-enter this cycle's inbox instead
+    # of rotting invisible in 'refining'. Best-effort — a reclaim failure must
+    # never block the drain. Mirrors scrape_runner's stale-reclaim pattern.
+    try:
+        reclaimed = await RawJobRepository(get_supabase()).reclaim_stale_refining(
+            _CLAIM_STALE_SECONDS
+        )
+        if reclaimed:
+            logger.warning("refine_reclaimed_stale_refining", extra={"count": reclaimed})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("refine_reclaim_failed", extra={"error": str(exc)})
 
     totals = {
         "fetched": 0, "refined": 0, "rejected": 0, "duplicate": 0,
@@ -94,8 +106,6 @@ async def drain(limit: int = 200, max_passes: int = 100) -> dict:
                 break
     except Exception as exc:  # noqa: BLE001
         logger.error("refine_drain_failed", extra={"error": str(exc)})
-    finally:
-        _refine_running = False
 
     # Persist this cycle's telemetry (best-effort: log + continue on failure).
     if refine_runs_repo is not None:

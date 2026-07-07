@@ -248,9 +248,11 @@ async def test_idempotent_only_reads_status_new():
 
 
 @pytest.mark.asyncio
-async def test_upsert_failure_leaves_row_new_for_retry():
+async def test_upsert_failure_releases_row_to_new_for_retry():
     """If the clean-shelf upsert fails, survivors are NOT marked terminal — they
-    stay 'new' so the next pass retries them (no silent loss)."""
+    are RELEASED back to 'new' so the next pass re-claims them (no silent loss).
+    AUDIT-P1-04: fetch_new claims rows to 'refining', so merely omitting the mark
+    would strand them invisible until the stale-claim reclaim."""
     p = _make_pipeline()
     p.raw_repo.fetch_new = AsyncMock(return_value=[_row("a")])
     p.job_repo.upsert = AsyncMock(side_effect=RuntimeError("supabase down"))
@@ -258,5 +260,6 @@ async def test_upsert_failure_leaves_row_new_for_retry():
     summary = await p.run()
 
     assert summary["refined"] == 0
-    # 'a' was never marked terminal
-    assert p.raw_repo.mark_status.call_count == 0
+    # 'a' was never marked terminal — explicitly released for retry instead
+    marked = {c.args[0]: c.args[1] for c in p.raw_repo.mark_status.call_args_list}
+    assert marked == {"a": "new"}

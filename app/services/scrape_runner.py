@@ -13,10 +13,16 @@ therefore PERSISTENT: ``scrape_runs`` records each source's last successful run,
 ``min_interval_hours`` (default 24h). A redeploy within the day re-reads that state
 and skips — no external calls. A missed day self-heals on the next tick.
 
-Single-flight guard (``_scrape_running``) prevents a slow cycle from overlapping the
-next tick. Set/read with NO ``await`` in between → atomic w.r.t. the asyncio loop.
-CAVEAT (mirrors refine_runner): single-process only. Multi-worker → promote to a
-Postgres advisory lock. Single-container Coolify deploy → one worker → enough.
+Concurrency (AUDIT-P1-04): the old in-process ``_scrape_running`` single-flight
+bool is GONE (single-process only — useless against ``--workers 2`` / a second
+replica). The claim now lives in the DB, per source: ``record_start``'s INSERT of
+the 'running' scrape_runs row is guarded by a partial unique index (one 'running'
+row per source, migrations/atomic-refine-claim.sql), so a concurrent second start
+of the same source loses the insert race (23505 → ``None`` → skipped). Stale
+'running' rows from a crashed process are reclaimed TIME-BASED at each cycle
+start: every live scrape is hard-capped by ``asyncio.wait_for``, so a row older
+than the timeout + margin is provably a crash orphan — unlike the old
+reclaim-all-at-startup, this never steals a sibling worker's in-flight run.
 """
 from __future__ import annotations
 
@@ -31,17 +37,13 @@ from app.services.scrape_orchestrator import ScrapeOrchestrator
 
 logger = logging.getLogger(__name__)
 
-# Module-level single-flight guard shared across scheduler ticks.
-_scrape_running = False
-
 # Small spacing between sequential source scrapes so a cycle does not fire all
 # sources at the same instant (rate limits / thundering herd on external APIs).
 _INTER_SOURCE_PAUSE_S = 2
 
-
-def is_running() -> bool:
-    """True while a scrape cycle is in flight (for tests / introspection)."""
-    return _scrape_running
+# Extra slack on top of source_timeout_seconds before a 'running' scrape_runs row
+# counts as a crash orphan (covers the record_finish write + clock skew).
+_RECLAIM_MARGIN_S = 120
 
 
 def _enabled_sources() -> list[str]:
@@ -71,22 +73,18 @@ async def run_due(
     Both share the same redeploy/quota safety: a same-day redeploy re-reads the
     persistent ``scrape_runs`` state and skips already-done sources.
 
-    For each due source: record a 'running' row → ScrapeOrchestrator.run → record
-    'done' (with stats) or, on error/timeout, 'failed'. ONLY a 'done' run resets the
-    cadence clock, so a failed source retries next tick. Per-source isolation: one
-    source raising never stops the others. Each source is capped at
+    For each due source: CLAIM it by inserting its 'running' row (record_start;
+    the one-running-per-source unique index makes this the cross-process
+    single-flight gate — a lost claim means another worker/replica is scraping
+    that source right now, so it is skipped) → ScrapeOrchestrator.run → record
+    'done' (with stats) or, on error/timeout, 'failed'. ONLY a 'done' run resets
+    the cadence clock, so a failed source retries next tick. Per-source isolation:
+    one source raising never stops the others. Each source is capped at
     ``source_timeout_seconds`` so a hung source can't wedge the whole sequential
-    cycle (and hold the single-flight guard). Single-flight: a no-op returning
-    ``{"skipped": True}`` if another cycle is already running.
+    cycle (or leave an eternally-blocking claim).
 
     Returns ``{checked, scraped, skipped, failed, sources: [...]}``.
     """
-    global _scrape_running
-    if _scrape_running:
-        logger.info("scrape_skip_already_running")
-        return {"skipped": True}
-    _scrape_running = True
-
     # Lazy import so importing this module never touches Supabase.
     from app.dependencies import get_supabase
 
@@ -96,6 +94,22 @@ async def run_due(
         runs = ScrapeRunRepository(client)
         now = datetime.now(timezone.utc)
         cutoff_seconds = min_interval_hours * 3600
+
+        # Crash recovery FIRST: a 'running' row older than the per-source timeout
+        # (+ margin) is provably orphaned (live scrapes are wait_for-capped) and
+        # would otherwise block its source forever via the unique claim index.
+        # Time-based → never steals a younger, legitimately in-flight claim.
+        # Best-effort: a reclaim failure must not stop the cycle.
+        try:
+            stale_before = now - timedelta(
+                seconds=source_timeout_seconds + _RECLAIM_MARGIN_S
+            )
+            reclaimed = await runs.reclaim_stale_running(stale_before)
+            if reclaimed:
+                logger.warning("scrape_reclaimed_stale_running", extra={"count": reclaimed})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("scrape_reclaim_failed", extra={"error": str(exc)})
+
         # Anchored gate: most recent <daily_anchor_hour>:00 UTC at or before now.
         anchor: datetime | None = None
         if daily_anchor_hour is not None:
@@ -116,6 +130,13 @@ async def run_due(
                 continue
 
             run_id = await runs.record_start(source_id)
+            if run_id is None:
+                # Claim lost: another worker/replica holds this source's 'running'
+                # row (or the audit insert failed) — skip; the loser retries next
+                # tick if the winner doesn't finish 'done'.
+                totals["skipped"] += 1
+                logger.info("scrape_claim_lost", extra={"source": source_id})
+                continue
             try:
                 resp = await asyncio.wait_for(
                     ScrapeOrchestrator(client).run(source_id=source_id),
@@ -147,8 +168,6 @@ async def run_due(
             await asyncio.sleep(_INTER_SOURCE_PAUSE_S)
     except Exception as exc:  # noqa: BLE001
         logger.error("scrape_run_due_failed", extra={"error": str(exc)})
-    finally:
-        _scrape_running = False
 
     logger.info("scrape_cycle_complete", extra={k: totals[k] for k in ("checked", "scraped", "skipped", "failed")})
     return totals
@@ -168,8 +187,10 @@ async def scheduler_loop(
     fresh DB has no prior runs ⇒ all sources due). A cycle failure is logged and the
     loop continues — one bad cycle must never kill the scheduler.
 
-    On startup it first reclaims any 'running' rows orphaned by a previous process
-    that died mid-scrape (redeploy), so they don't linger as zombies on /health.
+    Crash-orphan reclaim moved INTO run_due (time-based, every cycle): the old
+    startup reclaim-all was only safe with exactly one process — a second
+    worker/replica starting up would have marked a sibling's legitimately
+    in-flight 'running' rows as failed (AUDIT-P1-04).
     """
     logger.info(
         "scrape_scheduler_started",
@@ -179,16 +200,6 @@ async def scheduler_loop(
             "daily_anchor_hour": daily_anchor_hour,
         },
     )
-    try:
-        from app.dependencies import get_supabase
-        from app.repositories.scrape_runs import ScrapeRunRepository
-
-        reclaimed = await ScrapeRunRepository(get_supabase()).reclaim_stale_running()
-        if reclaimed:
-            logger.info("scrape_reclaimed_stale_running", extra={"count": reclaimed})
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("scrape_reclaim_failed", extra={"error": str(exc)})
-
     while not stop.is_set():
         try:
             await run_due(

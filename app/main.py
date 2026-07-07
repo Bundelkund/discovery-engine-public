@@ -41,8 +41,9 @@ async def lifespan(app: FastAPI):
         )
 
     # Autonomous refine: drain raw_jobs → jobs_v2 on an internal loop so the
-    # pipeline no longer depends on an external n8n cron. Single-flight guard in
-    # refine_runner keeps this and the manual /refine endpoint mutually exclusive.
+    # pipeline no longer depends on an external n8n cron. Concurrent drains
+    # (manual /refine, other workers/replicas) are safe: batches are claimed
+    # atomically in the DB (claim_refine_batch RPC, AUDIT-P1-04).
     settings = get_settings()
     refine_stop = asyncio.Event()
     refine_task: asyncio.Task | None = None

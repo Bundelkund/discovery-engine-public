@@ -23,15 +23,16 @@ logger = logging.getLogger(__name__)
 
 refine_router = APIRouter(tags=["refine"])
 
-# Single-flight, the drain loop, and the scheduler now live in
-# app/services/refine_runner.py so the manual endpoint and the internal scheduler
-# share ONE guard (two separate guards = no mutual exclusion between them). The
-# engine drains autonomously via that scheduler; this endpoint stays as a manual
-# kick / external-cron safety net and is fully idempotent.
+# The drain loop and the scheduler live in app/services/refine_runner.py.
+# Concurrency safety is DB-side (AUDIT-P1-04): each pass claims its batch
+# atomically via the claim_refine_batch RPC, so this endpoint racing the internal
+# scheduler (or another worker/replica) processes disjoint rows — no in-process
+# guard needed. The engine drains autonomously via that scheduler; this endpoint
+# stays as a manual kick / external-cron safety net and is fully idempotent.
 
 
 async def _run_refine(limit: int, max_passes: int) -> None:
-    """Background worker: one full drain cycle (single-flight via refine_runner)."""
+    """Background worker: one full drain cycle (DB-claimed batches, concurrency-safe)."""
     summary = await drain(limit=limit, max_passes=max_passes)
     logger.info("refine_run_done", extra=summary)
 

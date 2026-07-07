@@ -1,9 +1,12 @@
-"""Autonomous scrape runner: daily cadence gate, single-flight, scheduler loop.
+"""Autonomous scrape runner: daily cadence gate, per-source DB claim, scheduler loop.
 
 These guard the engine's self-triggering of scrapes: the fetch path must run from
 inside the app (not depend on an external n8n cron), scrape each source at most once
 per window (a redeploy must NOT re-hit external/paid APIs), isolate a failing source
-from the rest, and never let two cycles overlap.
+from the rest. AUDIT-P1-04: the in-process ``_scrape_running`` bool is gone —
+overlap protection is per-source in the DB (record_start's insert against the
+one-running-per-source unique index; a lost claim skips the source), plus a
+time-based stale-'running' reclaim at every cycle start.
 """
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -16,34 +19,43 @@ import app.services.scrape_runner as runner
 
 
 @pytest.fixture(autouse=True)
-def _reset_guard_and_pause(monkeypatch):
-    """Each test starts with the guard released and no inter-source sleep."""
-    runner._scrape_running = False
+def _no_pause(monkeypatch):
+    """No inter-source sleep; stub the supabase client."""
     monkeypatch.setattr(runner, "_INTER_SOURCE_PAUSE_S", 0)
     monkeypatch.setattr("app.dependencies.get_supabase", lambda: MagicMock())
     yield
-    runner._scrape_running = False
 
 
 class _FakeRuns:
-    """Stand-in for ScrapeRunRepository — records calls, returns canned last-success."""
+    """Stand-in for ScrapeRunRepository — records calls, returns canned last-success.
 
-    def __init__(self, last_map: dict | None = None):
+    ``deny``: sources whose record_start loses the DB claim (returns None).
+    """
+
+    def __init__(self, last_map: dict | None = None, deny: set | None = None):
         self.last_map = last_map or {}
+        self.deny = deny or set()
         self.started: list[str] = []
         self.finished: list[tuple] = []
+        self.reclaim_calls: list[datetime] = []
         self._n = 0
 
     async def last_success_at(self, source: str):
         return self.last_map.get(source)
 
-    async def record_start(self, source: str) -> str:
+    async def record_start(self, source: str) -> str | None:
+        if source in self.deny:
+            return None
         self.started.append(source)
         self._n += 1
         return f"run-{self._n}"
 
     async def record_finish(self, run_id, status, stats=None, error=None):
         self.finished.append((run_id, status, stats, error))
+
+    async def reclaim_stale_running(self, stale_before: datetime) -> int:
+        self.reclaim_calls.append(stale_before)
+        return 0
 
 
 class _FakeOrch:
@@ -144,27 +156,54 @@ async def test_run_due_source_timeout_marks_failed_and_continues(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_run_due_single_flight_skips(monkeypatch):
-    """A second cycle is a no-op while one is already running."""
-    runs = _FakeRuns()
-    _patch(monkeypatch, ["adzuna"], runs)
-    runner._scrape_running = True
+async def test_run_due_skips_source_when_db_claim_lost(monkeypatch):
+    """AUDIT-P1-04: a lost record_start claim (another worker/replica holds the
+    source's 'running' row) skips THAT source — never scraped, never finished —
+    while the sibling source still runs. Replaces the old in-process guard."""
+    runs = _FakeRuns(last_map={"adzuna": None, "indeed": None}, deny={"adzuna"})
+    _patch(monkeypatch, ["adzuna", "indeed"], runs)
 
-    result = await runner.run_due(min_interval_hours=24)
+    totals = await runner.run_due(min_interval_hours=24)
 
-    assert result == {"skipped": True}
-    assert runs.started == []
+    assert totals["skipped"] == 1 and totals["scraped"] == 1
+    assert runs.started == ["indeed"], "the denied source must not be scraped"
+    statuses = {src: status for src, (_, status, _, _) in zip(runs.started, runs.finished)}
+    assert statuses == {"indeed": "done"}
 
 
 @pytest.mark.asyncio
-async def test_run_due_releases_guard(monkeypatch):
-    """The guard is released after a cycle so the next tick can run."""
+async def test_run_due_reclaims_stale_running_first(monkeypatch):
+    """Every cycle starts with the time-based stale-'running' reclaim: cutoff =
+    now - (source_timeout + margin), so only provably-dead rows are reclaimed
+    (a live scrape is wait_for-capped at source_timeout)."""
     runs = _FakeRuns(last_map={"adzuna": None})
     _patch(monkeypatch, ["adzuna"], runs)
 
-    await runner.run_due(min_interval_hours=24)
+    before = datetime.now(timezone.utc)
+    await runner.run_due(min_interval_hours=24, source_timeout_seconds=1800)
+    after = datetime.now(timezone.utc)
 
-    assert runner.is_running() is False
+    assert len(runs.reclaim_calls) == 1
+    cutoff = runs.reclaim_calls[0]
+    expected_lo = before - timedelta(seconds=1800 + runner._RECLAIM_MARGIN_S)
+    expected_hi = after - timedelta(seconds=1800 + runner._RECLAIM_MARGIN_S)
+    assert expected_lo <= cutoff <= expected_hi
+
+
+@pytest.mark.asyncio
+async def test_run_due_survives_reclaim_failure(monkeypatch):
+    """A reclaim error is best-effort: the cycle must still scrape due sources."""
+    runs = _FakeRuns(last_map={"adzuna": None})
+
+    async def _boom(stale_before):
+        raise RuntimeError("db down")
+
+    runs.reclaim_stale_running = _boom
+    _patch(monkeypatch, ["adzuna"], runs)
+
+    totals = await runner.run_due(min_interval_hours=24)
+
+    assert totals["scraped"] == 1
 
 
 @pytest.mark.asyncio

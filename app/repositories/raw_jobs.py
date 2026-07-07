@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from app.models.job import RawJob
 from app.repositories.base import BaseRepository
@@ -165,56 +166,59 @@ class RawJobRepository(BaseRepository):
         return inserted
 
     async def fetch_new(self, limit: int = 100) -> list[dict]:
-        """Return up to `limit` raw_jobs(status='new') rows for the refine pipeline,
-        ordered by SOURCE PRIORITY, then oldest-first within each tier.
+        """Atomically CLAIM up to `limit` raw_jobs(status='new') rows for the refine
+        pipeline, ordered by SOURCE PRIORITY, then oldest-first within each tier.
 
-        Three tiers (see ``REFINE_PRIORITY_SOURCES`` / ``REFINE_DEFERRED_SOURCES``):
+        AUDIT-P1-04: this is no longer a plain SELECT (two concurrent drains —
+        multiple uvicorn workers, a second replica, or POST /refine racing the
+        scheduler — would fetch and double-process the same rows). Selection AND
+        claim now happen in ONE Postgres transaction via the ``claim_refine_batch``
+        RPC (migrations/atomic-refine-claim.sql): ``SELECT … FOR UPDATE SKIP
+        LOCKED`` + ``UPDATE status='refining'``. Concurrent callers receive
+        DISJOINT batches; the tier order (priority first, unlisted middle,
+        deferred/greenhouse last; FIFO by ingested_at within tier) is preserved
+        inside the SQL — external behavior is unchanged apart from the rows being
+        claimed ('refining') instead of left 'new'.
 
-          1. priority sources  — drained first
-          2. everything else   — middle
-          3. deferred sources  — only once the rest of the inbox is empty
-
-        The batch is filled tier by tier: tier 2 is queried only if tier 1 did not
-        already fill ``limit``, tier 3 only if 1+2 did not. ``ingested_at`` ascending
-        inside each tier keeps it FIFO per source, so the oldest targeted jobs clear
-        first and no single source starves within its tier. (All rows carry a source,
-        so the tier-2 NOT-IN filter loses nothing.)
+        Lifecycle: the pipeline moves every claimed row to a terminal status
+        (refined | rejected | duplicate) or explicitly releases it back to 'new'
+        for retry. Rows orphaned in 'refining' by a crash are recovered by
+        ``reclaim_stale_refining`` (called at every drain start).
         """
-        def _new_in_order(builder):
-            return builder.eq("status", "new").order("ingested_at")
-
-        out: list[dict] = []
-
-        # Tier 1 — priority sources.
         res = await asyncio.to_thread(
-            lambda: _new_in_order(self.client.table(self.TABLE).select("*"))
-            .in_("source", self.REFINE_PRIORITY_SOURCES)
-            .limit(limit)
+            lambda: self.client.rpc(
+                "claim_refine_batch",
+                {
+                    "p_limit": limit,
+                    "p_priority_sources": self.REFINE_PRIORITY_SOURCES,
+                    "p_deferred_sources": self.REFINE_DEFERRED_SOURCES,
+                },
+            ).execute()
+        )
+        return res.data or []
+
+    async def reclaim_stale_refining(self, stale_after_seconds: int = 1800) -> int:
+        """Release 'refining' rows claimed more than ``stale_after_seconds`` ago
+        back to 'new'. Returns the count released.
+
+        Crash recovery for the claim state (mirrors ScrapeRunRepository's stale
+        reclaim, the AUDIT-P0-05 zombie lesson): a drain that dies mid-pass leaves
+        its batch stuck 'refining' — invisible to fetch_new — forever. TIME-BASED
+        (not reclaim-all-at-startup) so a sibling worker's in-flight claim is never
+        stolen: only claims older than the window (default 30 min, far beyond one
+        pass) are presumed dead. Called best-effort at every drain start.
+        """
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)
+        ).isoformat()
+        res = await asyncio.to_thread(
+            lambda: self.client.table(self.TABLE)
+            .update({"status": "new", "refine_claimed_at": None})
+            .eq("status", "refining")
+            .lt("refine_claimed_at", cutoff)
             .execute()
         )
-        out.extend(res.data or [])
-
-        # Tier 2 — any source that is neither prioritised nor deferred.
-        if len(out) < limit:
-            res = await asyncio.to_thread(
-                lambda: _new_in_order(self.client.table(self.TABLE).select("*"))
-                .not_.in_("source", self.REFINE_PRIORITY_SOURCES + self.REFINE_DEFERRED_SOURCES)
-                .limit(limit - len(out))
-                .execute()
-            )
-            out.extend(res.data or [])
-
-        # Tier 3 — deferred high-volume sources (greenhouse) last.
-        if len(out) < limit:
-            res = await asyncio.to_thread(
-                lambda: _new_in_order(self.client.table(self.TABLE).select("*"))
-                .in_("source", self.REFINE_DEFERRED_SOURCES)
-                .limit(limit - len(out))
-                .execute()
-            )
-            out.extend(res.data or [])
-
-        return out[:limit]
+        return len(res.data or [])
 
     async def backlog_metrics(self) -> dict:
         """Health signal for the refine inbox: how many rows are stuck 'new' and
@@ -225,8 +229,6 @@ class RawJobRepository(BaseRepository):
         frozen for 8 days, undetected). Surfaced on /health so monitoring can
         alert long before the shelf goes stale.
         """
-        from datetime import datetime, timezone
-
         count_res = await asyncio.to_thread(
             lambda: self.client.table(self.TABLE)
             .select("id", count="exact")
@@ -259,7 +261,9 @@ class RawJobRepository(BaseRepository):
     async def mark_status(self, job_id: str, status: str) -> None:
         """Update the status of a single raw_jobs row.
 
-        Valid values: 'new', 'refined', 'rejected', 'duplicate'.
+        Valid values: 'refined' | 'rejected' | 'duplicate' (terminal), or 'new' to
+        RELEASE a claimed row for retry (e.g. after an upsert failure). 'refining'
+        is never set here — only the claim_refine_batch RPC claims rows.
         """
         await asyncio.to_thread(
             lambda: self.client.table(self.TABLE)
