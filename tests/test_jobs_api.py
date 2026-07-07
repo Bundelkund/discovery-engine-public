@@ -24,7 +24,12 @@ def _make_job_row(**kwargs) -> dict:
         "title": "Python Developer",
         "company": "Acme GmbH",
         "location": "Berlin",
-        "remote": True,
+        # AUDIT-P0-02 live drift shape: the dead physical column says false,
+        # the written source of truth (is_remote) says true. The API must
+        # serve is_remote.
+        "remote": False,
+        "is_remote": True,
+        "is_hybrid": False,
         "description": "We are looking for a Python developer with FastAPI skills.",
         "url": "https://acme.de/jobs/1",
         "source": "greenhouse",
@@ -397,3 +402,57 @@ def test_job_list_item_fields(client):
     assert "score_stage_1" not in job
     assert "final_score" not in job
     assert "archetype" in job
+
+
+# ---------------------------------------------------------------------------
+# AUDIT-P0-02: response `remote` is sourced from is_remote, not the dead column
+# ---------------------------------------------------------------------------
+
+
+def test_list_remote_sourced_from_is_remote(client):
+    """Row with is_remote=True but dead column remote=False -> response remote=True."""
+    rows = [_make_job_row(remote=False, is_remote=True)]
+    with _patch_query(rows):
+        resp = client.get("/jobs")
+    assert resp.status_code == 200
+    assert resp.json()["jobs"][0]["remote"] is True
+
+
+def test_list_remote_true_when_dead_column_absent(client):
+    """Row without the physical `remote` key at all -> response still correct."""
+    row = _make_job_row(is_remote=True)
+    del row["remote"]
+    with _patch_query([row]):
+        resp = client.get("/jobs")
+    assert resp.status_code == 200
+    assert resp.json()["jobs"][0]["remote"] is True
+
+
+def test_list_remote_false_for_onsite_job(client):
+    """is_remote=False must not be overridden by a stale remote=True value."""
+    rows = [_make_job_row(remote=True, is_remote=False)]
+    with _patch_query(rows):
+        resp = client.get("/jobs")
+    assert resp.status_code == 200
+    assert resp.json()["jobs"][0]["remote"] is False
+
+
+def test_list_remote_excludes_hybrid(client):
+    """Hybrid is not fully remote: is_hybrid=True alone -> remote stays False."""
+    rows = [_make_job_row(remote=False, is_remote=False, is_hybrid=True)]
+    with _patch_query(rows):
+        resp = client.get("/jobs")
+    assert resp.status_code == 200
+    assert resp.json()["jobs"][0]["remote"] is False
+
+
+def test_detail_remote_sourced_from_is_remote(client):
+    """GET /jobs/{id}: detail response remote also comes from is_remote."""
+    row = _make_job_row(remote=False, is_remote=True)
+    with patch(
+        "app.routes.jobs_api.JobRepository.get_by_id",
+        return_value=row,
+    ):
+        resp = client.get("/jobs/job-1")
+    assert resp.status_code == 200
+    assert resp.json()["remote"] is True

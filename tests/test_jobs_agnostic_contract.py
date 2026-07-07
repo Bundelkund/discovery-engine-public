@@ -24,7 +24,12 @@ def _make_job_row(**kwargs) -> dict:
         "title": "AI Consultant",
         "company": "Acme GmbH",
         "location": "Berlin",
-        "remote": True,
+        # AUDIT-P0-02: is_remote is the written source of truth; the physical
+        # `remote` column is dead (pending drop, see
+        # migrations/jobs-v2-drop-remote-column.sql).
+        "remote": False,
+        "is_remote": True,
+        "is_hybrid": False,
         "description": "We build AI tooling.",
         "url": "https://acme.de/jobs/1",
         "source": "adzuna",

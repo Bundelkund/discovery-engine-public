@@ -18,6 +18,15 @@ jobs_api_router = APIRouter(prefix="/jobs", tags=["jobs-api"])
 MAX_DESCRIPTION_LIST = 500
 
 
+# AUDIT-P0-02: the response field `remote` (external contract name, kept stable)
+# is sourced from jobs_v2.is_remote — the column the refine pipeline actually
+# writes (location.py -> repositories/jobs.py). The physical jobs_v2.remote
+# column is dead (NOT NULL DEFAULT false, never written; live drift 2026-07-07:
+# remote=true on 2 rows vs is_remote=true on 1922) and must NOT be read here.
+# `remote` means fully remote only — is_hybrid is intentionally not OR-ed in.
+# debt: dead physical column jobs_v2.remote still exists in the schema,
+# drop via migrations/jobs-v2-drop-remote-column.sql once WonderApply is
+# confirmed to not read jobs_v2.remote directly (API-only or v1-only access).
 def _row_to_list_item(row: dict) -> JobListItem:
     raw_desc = row.get("description")
     if raw_desc is None:
@@ -37,7 +46,7 @@ def _row_to_list_item(row: dict) -> JobListItem:
         title=row.get("title", ""),
         company=row.get("company", ""),
         location=row.get("location", ""),
-        remote=row.get("remote"),
+        remote=row.get("is_remote"),
         description=desc,
         url=row.get("url", ""),
         source=row.get("source", ""),
@@ -60,7 +69,7 @@ def _row_to_detail(row: dict) -> JobDetailResponse:
         title=row.get("title", ""),
         company=row.get("company", ""),
         location=row.get("location", ""),
-        remote=row.get("remote"),
+        remote=row.get("is_remote"),
         description=row.get("description", ""),
         url=row.get("url", ""),
         source=row.get("source", ""),

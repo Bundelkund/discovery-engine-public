@@ -1,0 +1,50 @@
+-- Drop jobs_v2.remote — dead physical column (AUDIT-P0-02).
+--
+-- ==== DRAFT — NOT APPLIED. Apply only after user approval. ====
+--
+-- WHY: jobs_v2 carried two remoteness families. is_remote / is_hybrid are the
+-- written source of truth (refine pipeline: app/data_quality/location.py ->
+-- app/repositories/jobs.py). The physical `remote` column (jobs-v2-parallel.sql:
+-- boolean NOT NULL DEFAULT false) is never written by any code path. Live drift
+-- verified 2026-07-07 on prod (29081 rows): remote=true on 2 rows vs
+-- is_remote=true on 1922; remote IS DISTINCT FROM is_remote on 1924 rows.
+-- The /jobs API served the dead column; fixed by repointing jobs_api.py to
+-- is_remote (response field NAME `remote` kept — external contract unchanged).
+--
+-- CONSUMER AUDIT (2026-07-07):
+--   - discovery-engine: only reader was jobs_api.py (repointed to is_remote).
+--     select("*") + search_jobs_ranked's to_jsonb(t.*) tolerate the drop — the
+--     key simply disappears from row JSON and nothing reads it anymore.
+--     No .eq("remote"...) filter, no index, no RPC references the column.
+--   - tenant-module: Draht-2 guard (tests/test_draht2_http_only.py) forbids
+--     direct jobs_v2 access; consumes only the Engine HTTP API. Covered.
+--   - tenant-mcp: raw pass-through of tenant-module /my/job. Covered.
+--   - apply skill: consumes /my/matches (no remote field at all). Unaffected.
+--   - WonderApply: NOT locally auditable. Last verified 2026-06-09
+--     (drop-jobs-v2-score-stage-1.sql): reads v1 `public.jobs` with explicit
+--     column lists — NOT jobs_v2. MUST be re-confirmed before applying this
+--     drop. v1 `public.jobs` is intentionally LEFT UNTOUCHED (frozen).
+--
+-- SAFETY: idempotent (IF EXISTS). No RPC created/changed -> no search_path /
+-- SECURITY INVOKER / GRANT surface (AUDIT-P1-06 n/a). No backfill needed:
+-- no auditable consumer reads the physical column, and a one-time backfill
+-- would go stale immediately (no writer maintains `remote`).
+--
+-- DEPLOY ORDER (SAFETY-CRITICAL):
+--   1. Deploy the code repoint (jobs_api.py reads is_remote) to Coolify.
+--      The repoint does NOT depend on this migration — it ships alone.
+--   2. Confirm WonderApply does not select jobs_v2.remote directly.
+--   3. THEN run this DDL. Running it before step 1 is live would break the old
+--      build only if it still read the column via an explicit column list — it
+--      used select("*")/to_jsonb, so even that degrades to remote=null, but do
+--      not rely on it: keep the order above.
+--
+-- CONTINGENCY (mutually exclusive with the DROP below): if step 2 reveals
+-- WonderApply DOES read jobs_v2.remote, do NOT drop. Instead repoint
+-- WonderApply to is_remote; only as a stopgap until that lands, backfill:
+--   -- UPDATE public.jobs_v2 SET remote = is_remote
+--   --   WHERE remote IS DISTINCT FROM is_remote;
+--   -- (stopgap only: goes stale on every new refine upsert — no writer
+--   --  maintains `remote`; the real fix is repointing the consumer.)
+
+ALTER TABLE public.jobs_v2 DROP COLUMN IF EXISTS remote;
