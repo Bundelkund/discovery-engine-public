@@ -95,9 +95,9 @@ sources:
     portals_file: "config/portals.yaml"
   bite:
     enabled: true
-    # b-ite ATS — each employer runs a careers site on its own domain, indexed by
-    # {base_url}/sitemap.xml.gz; each posting embeds a schema.org JobPosting (ld+json).
-    # No slug-universe to enumerate → add employers explicitly here. Common in public sector.
+    # b-ite ATS — each employer runs a careers site on its own domain; jobs are
+    # discovered via the site's robots.txt sitemap. Edit search-profile.yaml
+    # `bite_sites:` (verify candidates with scripts/bite_discover.py), not here.
     sites:
       - name: "Stiftung Preußischer Kulturbesitz"
         base_url: "https://karriere.preussischer-kulturbesitz.de"

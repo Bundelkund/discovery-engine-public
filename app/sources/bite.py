@@ -18,9 +18,20 @@ _JSONLD_RE = re.compile(
     r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.S | re.I,
 )
-# Job URLs in the sitemap: /jobposting/<40-hex sha1>. Same 40-hex is the b-ite
-# posting id (identifier.value) -> stable external_id / dedup key.
-_JOB_LOC_RE = re.compile(r"<loc>\s*([^<\s]+/jobposting/[a-f0-9]{40})\s*</loc>", re.I)
+# Job-posting URLs in the sitemap. The path VARIES per b-ite tenant:
+#   SPK  /jobposting/<40-hex sha1>      (hex id; also = identifier.value)
+#   DRK  /job-postings/<readable-slug>  (slug; id comes from JSON-LD identifier)
+# Require a non-empty segment after the path so the bare listing page
+# (…/job-postings) is not matched. The real external_id is JSON-LD identifier.value;
+# the URL is only a fallback (_SHA_RE).
+# debt: two known path schemes hardcoded; upgrade-trigger: add an employer whose
+# b-ite job URLs use a third path -> extend this alternation.
+_JOB_LOC_RE = re.compile(
+    r"<loc>\s*([^<\s]+/(?:jobposting/[a-f0-9]{40}|job-postings/[^<\s/]+))\s*</loc>",
+    re.I,
+)
+# Any <loc> — used to follow sitemap-index nesting (locs pointing to sub-sitemaps).
+_ANY_LOC_RE = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
 _SHA_RE = re.compile(r"/jobposting/([a-f0-9]{40})", re.I)
 
 
@@ -30,15 +41,18 @@ class BiteScraper(BaseScraper):
     (e.g. karriere.<employer>.de), rendered by jobs.b-ite.com.
 
     Unlike softgarden there is no ``{slug}.vendor.tld`` board universe to
-    enumerate: each employer is added explicitly. Index = ``{base}/sitemap.xml.gz``
-    (a urlset of ``/jobposting/<sha>`` links); each posting page embeds a full
-    schema.org JobPosting as ld+json (title, description, hiringOrganization,
-    jobLocation, datePosted, identifier). Config: ``sources.yaml`` ->
-    ``bite.sites = [{name, base_url}]``. Common in the public sector.
+    enumerate: each employer is added explicitly. Index = the job sitemap the
+    site DECLARES in robots.txt (path varies per tenant — SPK /sitemap.xml.gz,
+    DRK /sitemap-job-postings.xml), a urlset of ``/jobposting/<sha>`` links; each
+    posting page embeds a full schema.org JobPosting as ld+json (title,
+    description, hiringOrganization, jobLocation, datePosted, identifier). Config:
+    ``sources.yaml`` -> ``bite.sites = [{name, base_url}]``. Common in public sector.
     """
 
     source_id = "bite"
-    SITEMAP_PATH = "/sitemap.xml.gz"
+    # Job sitemap path is DISCOVERED from robots.txt (varies per tenant); these
+    # are only the fallback when robots.txt declares no Sitemap.
+    DEFAULT_SITEMAP_PATHS = ("/sitemap.xml.gz", "/sitemap.xml")
 
     async def fetch(self, config: dict) -> list[RawJob]:
         try:
@@ -52,13 +66,14 @@ class BiteScraper(BaseScraper):
                     if not base:
                         continue
                     try:
-                        sitemap_body = await self._fetch_sitemap(client, base)
-                        # Board-level checksum skip: unchanged sitemap -> no posting
-                        # added/removed, skip the whole site (per-posting edits are
-                        # not re-ingested anyway — raw_jobs dedups on external_id).
-                        if await cache.seen_unchanged(self.source_id, base, sitemap_body):
+                        job_urls = await self._discover_job_urls(client, base)
+                        # Board-level checksum skip keyed on the sorted job-URL set
+                        # (the "index" of live postings): unchanged set -> nothing
+                        # added/removed, skip the per-posting fetch. Per-posting edits
+                        # aren't re-ingested anyway (raw_jobs dedups on external_id).
+                        index_key = "\n".join(sorted(set(job_urls)))
+                        if await cache.seen_unchanged(self.source_id, base, index_key):
                             continue
-                        job_urls = _JOB_LOC_RE.findall(sitemap_body)
                         for job_url in job_urls:
                             try:
                                 resp = await client.get(job_url)
@@ -69,7 +84,7 @@ class BiteScraper(BaseScraper):
                             except Exception as e:
                                 logger.warning(f"Bite posting '{job_url}' failed: {e}")
                                 continue
-                        await cache.record(self.source_id, base, sitemap_body)
+                        await cache.record(self.source_id, base, index_key)
                     except Exception as e:
                         logger.warning(f"Bite site '{base}' failed: {e}")
                         continue
@@ -82,18 +97,116 @@ class BiteScraper(BaseScraper):
             logger.error(f"Bite fetch failed: {e}")
             return []
 
-    async def _fetch_sitemap(self, client: httpx.AsyncClient, base: str) -> str:
-        """Return the sitemap XML text. The `.gz` path is served either as gzip
-        bytes or (some deployments) as already-decompressed XML — handle both."""
-        resp = await client.get(base + self.SITEMAP_PATH)
+    async def probe_site(self, client: httpx.AsyncClient, base: str) -> dict:
+        """Cheaply verify a CANDIDATE careers domain is a b-ite site worth adding.
+
+        robots.txt -> job sitemap -> ONE sample posting's fingerprint. Fetches at
+        most a handful of pages regardless of how many jobs the employer has
+        (used by scripts/bite_discover.py to vet discovery candidates before they
+        go into config). Read-only. Returns a verdict dict::
+
+            {base, is_bite, job_count, employer, sample_title, sitemaps, reason}
+        """
+        base = base.rstrip("/")
+        if not base.startswith(("http://", "https://")):
+            base = "https://" + base
+        v = {"base": base, "is_bite": False, "job_count": 0,
+             "employer": "", "sample_title": "", "sitemaps": [], "reason": ""}
+        try:
+            v["sitemaps"] = await self._sitemap_urls_from_robots(client, base)
+            job_urls = await self._discover_job_urls(client, base, sitemaps=v["sitemaps"])
+        except Exception as e:  # noqa: BLE001 — verdict, not crash
+            v["reason"] = f"sitemap discovery failed: {e}"
+            return v
+        v["job_count"] = len(job_urls)
+        if not job_urls:
+            v["reason"] = "no b-ite job URLs (/jobposting or /job-postings) in sitemaps"
+            return v
+        try:
+            resp = await client.get(job_urls[0])
+            resp.raise_for_status()
+            html = resp.text
+        except Exception as e:  # noqa: BLE001
+            v["reason"] = f"sample posting fetch failed: {e}"
+            return v
+        raw = self._parse_posting(html, job_urls[0], base)
+        fingerprint = ("jobs.b-ite.com" in html) or ("Bite JobPosting" in html)
+        if raw is None or not fingerprint:
+            v["reason"] = "sample posting carries no b-ite JobPosting"
+            return v
+        v.update(is_bite=True, employer=raw.company, sample_title=raw.title)
+        return v
+
+    async def _discover_job_urls(
+        self, client: httpx.AsyncClient, base: str, sitemaps: list[str] | None = None
+    ) -> list[str]:
+        """Return every ``/jobposting/<sha>`` URL for an employer.
+
+        The job sitemap path VARIES per b-ite tenant (SPK /sitemap.xml.gz, DRK
+        /sitemap-job-postings.xml), so we don't guess it: read the ``Sitemap:``
+        line(s) from robots.txt and scan them, following one level of
+        sitemap-INDEX nesting. Falls back to ``DEFAULT_SITEMAP_PATHS`` when robots
+        declares none. Job-posting locs are collected across all declared
+        sitemaps (a static/pages sitemap simply contributes none).
+
+        ``sitemaps`` may be passed pre-fetched (probe_site already read robots) to
+        avoid a second robots.txt request; pass ``None`` to have it read robots."""
+        if sitemaps is None:
+            sitemaps = await self._sitemap_urls_from_robots(client, base)
+        if not sitemaps:
+            sitemaps = [base + p for p in self.DEFAULT_SITEMAP_PATHS]
+
+        job_urls: list[str] = []
+        seen: set[str] = set()
+        queue = list(sitemaps)
+        guard = 0
+        while queue and guard < 50:  # guard against a runaway sitemap-index loop
+            guard += 1
+            sm_url = queue.pop(0)
+            if sm_url in seen:
+                continue
+            seen.add(sm_url)
+            try:
+                text = await self._fetch_xml(client, sm_url)
+            except Exception as e:
+                logger.warning(f"Bite sitemap '{sm_url}' failed: {e}")
+                continue
+            job_urls.extend(_JOB_LOC_RE.findall(text))
+            # sitemap-index: follow nested <loc>s that point to more sitemaps
+            for loc in _ANY_LOC_RE.findall(text):
+                if "/jobposting/" in loc:
+                    continue
+                if (loc.endswith(".xml") or loc.endswith(".xml.gz")) and loc not in seen:
+                    queue.append(loc)
+        return list(dict.fromkeys(job_urls))  # dedup, preserve order
+
+    async def _sitemap_urls_from_robots(
+        self, client: httpx.AsyncClient, base: str
+    ) -> list[str]:
+        """``Sitemap:`` URLs declared in robots.txt ([] on any failure)."""
+        try:
+            resp = await client.get(base + "/robots.txt")
+            resp.raise_for_status()
+            out: list[str] = []
+            for line in resp.text.splitlines():
+                if line.strip().lower().startswith("sitemap:"):
+                    url = line.split(":", 1)[1].strip()
+                    if url:
+                        out.append(url)
+            return out
+        except Exception:
+            return []
+
+    async def _fetch_xml(self, client: httpx.AsyncClient, url: str) -> str:
+        """Fetch a sitemap URL as text. A `.gz` sitemap is served either as gzip
+        bytes or (some deployments) already-decompressed XML — handle both."""
+        resp = await client.get(url)
         resp.raise_for_status()
         raw = resp.content
         try:
             return gzip.decompress(raw).decode("utf-8", "replace")
         except (OSError, gzip.BadGzipFile):
             return raw.decode("utf-8", "replace")
-        # debt: flat urlset only; a sitemap-INDEX (sub-sitemaps) yields 0 job locs.
-        # upgrade-trigger: add an employer whose sitemap.xml.gz is an index.
 
     def _parse_posting(self, html: str, url: str, site_name: str) -> RawJob | None:
         m = _JSONLD_RE.search(html)

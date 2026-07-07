@@ -110,17 +110,21 @@ def test_bite_parse_date_variants():
 def test_bite_sitemap_regex_extracts_job_locs():
     from app.sources.bite import _JOB_LOC_RE
 
+    drk_job = "https://jobs.drk.de/job-postings/drk-kv-musterstadt-pflegefachkraft-m-w-d"
     xml = (
         "<urlset>"
-        f"<url><loc>{JOB_URL}</loc></url>"
-        "<url><loc>https://karriere.preussischer-kulturbesitz.de/imprint</loc></url>"
+        f"<url><loc>{JOB_URL}</loc></url>"                                    # SPK /jobposting/<hex>
+        "<url><loc>https://karriere.preussischer-kulturbesitz.de/imprint</loc></url>"  # page → skip
         "<url><loc>https://karriere.preussischer-kulturbesitz.de/jobposting/"
-        "b23f07066ecdd628bc547cbd22d2a4568749a57e</loc></url>"
+        "b23f07066ecdd628bc547cbd22d2a4568749a57e</loc></url>"               # SPK /jobposting/<hex>
+        f"<url><loc>{drk_job}</loc></url>"                                    # DRK /job-postings/<slug>
+        "<url><loc>https://jobs.drk.de/job-postings</loc></url>"             # bare listing → skip
         "</urlset>"
     )
     locs = _JOB_LOC_RE.findall(xml)
-    assert len(locs) == 2  # only /jobposting/<sha40>, not /imprint
+    assert len(locs) == 3  # 2× SPK hex + 1× DRK slug; NOT /imprint, NOT bare /job-postings
     assert JOB_URL in locs
+    assert drk_job in locs
 
 
 def test_bite_normalize_sets_content_hash():
@@ -131,6 +135,9 @@ def test_bite_normalize_sets_content_hash():
     assert norm.source == "bite"
 
 
+BASE = "https://karriere.preussischer-kulturbesitz.de"
+
+
 def _resp(content: bytes = b"", text: str = ""):
     r = MagicMock()
     r.raise_for_status = MagicMock()
@@ -139,57 +146,164 @@ def _resp(content: bytes = b"", text: str = ""):
     return r
 
 
-@pytest.mark.asyncio
-async def test_bite_fetch_parses_sitemap_and_postings():
-    """sitemap (plain XML) → one posting fetched → one RawJob; sitemap checksum recorded."""
-    sitemap_xml = f"<urlset><url><loc>{JOB_URL}</loc></url></urlset>"
-    posting = _resp(text=_page(SAMPLE_JP))
-    sitemap = _resp(content=sitemap_xml.encode("utf-8"))
+def _fail_resp():
+    r = MagicMock()
+    r.raise_for_status = MagicMock(side_effect=Exception("404"))
+    r.content = b""
+    r.text = ""
+    return r
 
+
+def _robots(*sitemap_urls: str):
+    body = "User-agent: *\nAllow: /\n" + "".join(f"Sitemap: {u}\n" for u in sitemap_urls)
+    return _resp(text=body)
+
+
+def _urlset(*job_urls: str):
+    body = "<urlset>" + "".join(f"<url><loc>{u}</loc></url>" for u in job_urls) + "</urlset>"
+    return _resp(content=body.encode("utf-8"))
+
+
+def _sitemapindex(*sub_urls: str):
+    body = "<sitemapindex>" + "".join(f"<sitemap><loc>{u}</loc></sitemap>" for u in sub_urls) + "</sitemapindex>"
+    return _resp(content=body.encode("utf-8"))
+
+
+def _client(responses: list):
+    """Build a mocked httpx.AsyncClient context manager whose .get() returns
+    `responses` in order. Returns (http_client, acm) so tests can assert calls."""
     http_client = MagicMock()
-    http_client.get = AsyncMock(side_effect=[sitemap, posting])
+    http_client.get = AsyncMock(side_effect=responses)
     acm = MagicMock()
     acm.__aenter__ = AsyncMock(return_value=http_client)
     acm.__aexit__ = AsyncMock(return_value=False)
+    return http_client, acm
 
+
+def _requested(http_client) -> list[str]:
+    return [c.args[0] for c in http_client.get.call_args_list]
+
+
+async def _run_fetch(responses, base=BASE, seen_unchanged=False):
+    http_client, acm = _client(responses)
     cache = MagicMock()
-    cache.seen_unchanged = AsyncMock(return_value=False)
+    cache.seen_unchanged = AsyncMock(return_value=seen_unchanged)
     cache.record = AsyncMock()
-
     with (
         patch("app.sources.bite.httpx.AsyncClient", return_value=acm),
         patch("app.sources.bite.FetchCache", return_value=cache),
     ):
-        jobs = await BiteScraper().fetch(
-            {"sites": [{"name": "SPK", "base_url": "https://karriere.preussischer-kulturbesitz.de"}]}
-        )
+        jobs = await BiteScraper().fetch({"sites": [{"name": "SPK", "base_url": base}]})
+    return jobs, http_client, cache
 
+
+@pytest.mark.asyncio
+async def test_bite_fetch_parses_sitemap_and_postings():
+    """robots → declared sitemap → one posting → one RawJob; index checksum recorded."""
+    jobs, _hc, cache = await _run_fetch([
+        _robots(f"{BASE}/sitemap.xml.gz"),
+        _urlset(JOB_URL),
+        _resp(text=_page(SAMPLE_JP)),
+    ])
     assert [j.external_id for j in jobs] == ["9d5c7431b403ad6d71b7cc47fd0063c16a2e9ef2"]
     cache.record.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_bite_fetch_skips_unchanged_sitemap():
-    """Unchanged sitemap (checksum hit) → skip site entirely, never fetch postings."""
-    sitemap = _resp(content=b"<urlset/>")
-    http_client = MagicMock()
-    http_client.get = AsyncMock(return_value=sitemap)
-    acm = MagicMock()
-    acm.__aenter__ = AsyncMock(return_value=http_client)
-    acm.__aexit__ = AsyncMock(return_value=False)
-
-    cache = MagicMock()
-    cache.seen_unchanged = AsyncMock(return_value=True)  # unchanged → skip
-    cache.record = AsyncMock()
-
-    with (
-        patch("app.sources.bite.httpx.AsyncClient", return_value=acm),
-        patch("app.sources.bite.FetchCache", return_value=cache),
-    ):
-        jobs = await BiteScraper().fetch(
-            {"sites": [{"name": "SPK", "base_url": "https://x.de"}]}
-        )
-
+async def test_bite_fetch_skips_unchanged_index():
+    """Unchanged job-URL set (checksum hit) → skip per-posting fetch entirely."""
+    jobs, http_client, cache = await _run_fetch(
+        [_robots(f"{BASE}/sitemap.xml.gz"), _urlset(JOB_URL)],
+        seen_unchanged=True,
+    )
     assert jobs == []
-    assert http_client.get.await_count == 1  # only the sitemap, no postings
+    # robots + sitemap are still read (to build the index key); NO posting fetch.
+    assert http_client.get.await_count == 2
     cache.record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bite_discovers_sitemap_via_robots_not_default_path():
+    """robots declares a NON-default job sitemap (DRK-style) → follow it, never
+    request /sitemap.xml.gz."""
+    job_sitemap = f"{BASE}/sitemap-job-postings.xml"
+    jobs, http_client, _c = await _run_fetch([
+        _robots(f"{BASE}/sitemap-static.xml", job_sitemap),
+        _urlset(),                       # static sitemap: no jobs
+        _urlset(JOB_URL),                # job sitemap
+        _resp(text=_page(SAMPLE_JP)),
+    ])
+    assert [j.external_id for j in jobs] == ["9d5c7431b403ad6d71b7cc47fd0063c16a2e9ef2"]
+    reqs = _requested(http_client)
+    assert job_sitemap in reqs
+    assert f"{BASE}/sitemap.xml.gz" not in reqs  # never guessed the default
+
+
+@pytest.mark.asyncio
+async def test_bite_robots_missing_falls_back_to_default_path():
+    """robots.txt unreachable → fall back to DEFAULT_SITEMAP_PATHS."""
+    jobs, http_client, _c = await _run_fetch([
+        _fail_resp(),          # robots.txt 404
+        _urlset(JOB_URL),      # base + /sitemap.xml.gz
+        _urlset(),             # base + /sitemap.xml
+        _resp(text=_page(SAMPLE_JP)),
+    ])
+    assert [j.external_id for j in jobs] == ["9d5c7431b403ad6d71b7cc47fd0063c16a2e9ef2"]
+    assert f"{BASE}/sitemap.xml.gz" in _requested(http_client)
+
+
+@pytest.mark.asyncio
+async def test_bite_follows_sitemap_index_nesting():
+    """robots → sitemap-INDEX → sub-sitemap with the job loc → posting."""
+    sub = f"{BASE}/sub-jobs.xml.gz"
+    jobs, _hc, _c = await _run_fetch([
+        _robots(f"{BASE}/sitemap-index.xml"),
+        _sitemapindex(sub),
+        _urlset(JOB_URL),
+        _resp(text=_page(SAMPLE_JP)),
+    ])
+    assert [j.external_id for j in jobs] == ["9d5c7431b403ad6d71b7cc47fd0063c16a2e9ef2"]
+
+
+# ---- probe_site (verify-and-add helper, scripts/bite_discover.py) -----------
+
+@pytest.mark.asyncio
+async def test_probe_site_confirms_bite():
+    """robots → sitemap → sample posting with the b-ite fingerprint → confirmed."""
+    http_client, _acm = _client([
+        _robots(f"{BASE}/sitemap.xml.gz"),
+        _urlset(JOB_URL),
+        _resp(text=_page(SAMPLE_JP)),  # SAMPLE_JP.identifier.name == "Bite JobPosting"
+    ])
+    v = await BiteScraper().probe_site(http_client, BASE)
+    assert v["is_bite"] is True
+    assert v["employer"] == "Stiftung Preußischer Kulturbesitz"
+    assert v["job_count"] == 1
+    assert v["sample_title"].startswith("Sachbearbeiter")
+
+
+@pytest.mark.asyncio
+async def test_probe_site_rejects_non_bite_posting():
+    """Sitemap has a job-shaped URL, but the posting carries no b-ite JobPosting."""
+    http_client, _acm = _client([
+        _robots(f"{BASE}/sitemap.xml.gz"),
+        _urlset(JOB_URL),
+        _resp(text="<html><body>generic careers page, no structured data</body></html>"),
+    ])
+    v = await BiteScraper().probe_site(http_client, BASE)
+    assert v["is_bite"] is False
+    assert "no b-ite JobPosting" in v["reason"]
+
+
+@pytest.mark.asyncio
+async def test_probe_site_rejects_when_no_job_urls():
+    """Reachable sitemap but zero b-ite job URLs → rejected before fetching a posting."""
+    http_client, _acm = _client([
+        _robots(f"{BASE}/sitemap.xml.gz"),
+        _urlset(),  # empty urlset
+    ])
+    v = await BiteScraper().probe_site(http_client, BASE)
+    assert v["is_bite"] is False
+    assert v["job_count"] == 0
+    assert "no b-ite job URLs" in v["reason"]
+    assert http_client.get.await_count == 2  # robots + sitemap only, no posting
