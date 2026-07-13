@@ -69,6 +69,10 @@ Full env table + persistent-file-volume (`portals.local.yaml`) details: florian-
 | Consumer-facing response shapes live in `app/models/responses.py`, separate from pipeline models in `app/models/job.py` | Pipeline lifecycle (`RawJob` → `NormalizedJob` → `ScoredJob`) decoupled from public API |
 | Tests follow source layout: `tests/<subpackage>/test_<module>.py` | One test file per module makes coverage gaps visible |
 | Migrations are additive-only, idempotent (`IF NOT EXISTS`), run via Supabase Dashboard | No direct Postgres URL available; rollback documented in `migrations/README.md` |
+| **Client errors: `raise HTTPException(status_code, detail=<string>)`** — `detail` is always a short string, never a structured object | Uniform error surface for consumers; all current call sites already follow this |
+| **Supabase boundary: `.execute()` then `.data`** — `result.data[0] if result.data else None` (single) / `res.data or []` (list); no `.single()`/`.maybe_single()`; the caller does the `None`-guard (`if not data: raise HTTPException(404)`). On a caught error, `logger.<level>("<snake_event>", extra={"error": str(exc)})` and fall back — never re-raise as `HTTPException` from the repo layer | One boundary idiom; structured event keys stay greppable; HTTP mapping stays in routes |
+| **Consumer read endpoints return a `responses.py` Pydantic model directly (no `{data,error}` envelope)**, typed via return annotation; list pagination is `limit`/`offset` | Read shape decoupled from pipeline models. Note: the `page`/`page_size` `JobListResponse` model is dead — don't use it |
+| **Canonical domain terms: `job` (not posting/listing) and `company` (not employer) as identifiers**; no `candidate`/`applicant` vocabulary (single-tenant, exactly one applicant) | Prevents synonym drift; `posting`/`employer` are fine in prose/comments only |
 
 ## Where to start reading
 
